@@ -19,31 +19,156 @@
 
 ### 4. コンポーネント設計仕様 (Component Design Specifications)
 
-#### 4.1. Model レイヤー (`model.py`)
-- **責務**: アプリケーションの幾何学的状態（Mesh, Lens）の保持と、JSON 形式へのシリアライズ。
-- **主要クラス**:
-    - `MeshModel`: $N \times M$ の `Point` 2次元配列を管理。
-        - `rotate_clockwise()`: 格子構造を転置・反転させ、物理的な「上」を補正する。
-- **データ所有権**: Model は Controller によって管理され、View や Engine へは参照として渡される。
+#### 4.1. クラス構造概略 (Class Diagram)
 
-#### 4.2. Engine レイヤー (`engine.py`, `pytorch_engine.py`)
-- **責務**: 数学的な幾何変換ロジックの実装。
-- **主要な API**:
-    - `WarpEngine.get_mesh_map(mesh: MeshModel, width: int, height: int) -> Tuple[np.ndarray, np.ndarray]`:
-        - 低解像度グリッドからフル解像度の座標マップ（map_x, map_y）を生成する。
-    - `PyTorchWarpEngine.minimize_energy(mesh: MeshModel, fixed_indices: List[Tuple[int, int]])`:
-        - L-BFGS を用いて格子の曲げエネルギーを最小化し、滑らかな変形を実現する。
-- **技術的制約**: OpenCV と PyTorch の間で、中心座標の定義や補完のアルゴリズムが 100% 一致することを保証しなければならない。
+```mermaid
+classDiagram
+    namespace Model_Layer {
+        class Point {
+            +float x
+            +float y
+        }
+        class LensModel {
+            +float k1
+            +float k2
+            +to_dict()
+            +from_dict(data)
+        }
+        class MeshModel {
+            +int rows
+            +int cols
+            +List~List~Point~~ points
+            +reset()
+            +rotate_clockwise()
+            +to_dict()
+            +from_dict(data)
+        }
+    }
 
-#### 4.3. Controller レイヤー (`controller.py`)
-- **責務**: レイヤー間のオーケストレーション。View からの Signal を受け取り、Model を更新し、Engine を通じてプレビューを再生成する。
-- **同期ポリシー**: `on_point_moved` 時、四隅が移動した場合は `WarpEngine.sync_perspective` を強制実行し、射影変換の整合性を維持する。
+    namespace Engine_Layer {
+        class WarpEngine {
+            <<static>>
+            +get_mesh_map(mesh, width, height)
+            +apply_lens_distortion(image, lens)
+            +apply_mesh_rectification(image, mesh)
+            +process_preview(image, mesh, lens, rectified)
+            +sync_perspective(mesh)
+            +expand_mesh(mesh)
+        }
+        class PyTorchWarpEngine {
+            -device
+            -SuperResModel sr_model
+            +apply_mesh_rectification(image_np, mesh)
+            +detect_initial_grid(image_np, target_rows, target_cols)
+            +apply_lens_distortion(img_tensor, lens)
+            +minimize_energy(mesh, fixed_indices)
+            +process_all(image_np, mesh, lens, use_sr)
+        }
+        class SuperResModel {
+            +forward(x)
+        }
+    }
 
-#### 4.4. View レイヤー (`view.py`)
-- **責務**: 画像と格子の重畳描画、およびマウス操作による座標入力の取得。
-- **主要な API**:
-    - `Canvas.pointMoved(int, int, float, float)`: 移動した制御点の (row, col) と、新しい正規化座標 (x, y) を発行する。
-- **視認性補助**: `show_grid`, `show_crosshair` フラグにより、レンズ補正とメッシュ補正のそれぞれのフェーズに適したガイドラインを表示する。
+    namespace View_Layer {
+        class Canvas {
+            +QPixmap pixmap
+            +MeshModel mesh
+            +Point selected_point
+            +Point crosshair_pos
+            +bool show_grid
+            +bool show_crosshair
+            +bool constraint_mode
+            +Signal pointMoved(int, int, float, float)
+            +set_image(qimage)
+            +set_mesh(mesh)
+            +set_show_grid(bool)
+            +set_show_crosshair(bool)
+            +draw_grid(painter, pixmap, ox, oy)
+            +mousePressEvent(event)
+            +mouseMoveEvent(event)
+            +mouseReleaseEvent(event)
+        }
+        class CameraDialog {
+            +QLabel video_label
+            +QPushButton btn_capture
+            +Signal imageCaptured
+            +start_camera()
+            +stop_camera()
+            +update_frame()
+            +capture()
+        }
+        class PreviewWindow {
+            +QLabel label
+            +set_image(qimage)
+        }
+        class MainWindow {
+            +Canvas canvas
+            +get_grid_dimensions()
+            +set_grid_dimensions(r, c)
+            +get_lens_params()
+            +set_lens_params(k1, k2)
+            +is_preview_enabled()
+            +is_super_res_enabled()
+            +is_smooth_warp_enabled()
+            +reset_lens_sliders()
+            +rotate_grid()
+            +set_grid_visible(bool)
+            +set_crosshair_visible(bool)
+        }
+    }
+
+    namespace Controller_Layer {
+        class Controller {
+            -MainWindow view
+            -MeshModel mesh
+            -LensModel lens
+            -PyTorchWarpEngine py_engine
+            -PreviewWindow preview_window
+            -CameraDialog camera_dialog
+            -Mat original_image
+            +open_image()
+            +open_camera()
+            +load_new_image(image)
+            +update_lens()
+            +update_preview()
+            +resize_mesh()
+            +reset_mesh()
+            +straighten_grid()
+            +expand_mesh_to_full_frame()
+            +rotate_grid()
+            +on_point_moved(r, c, nx, ny)
+            +on_auto_grid()
+            +save_project()
+            +load_project()
+            +export()
+            +toggle_preview_window(state)
+        }
+    }
+
+    %% Relationships
+    MeshModel "1" *-- "N" Point : contains
+    Controller "1" o-- "1" MainWindow : view
+    Controller "1" o-- "1" MeshModel : model
+    Controller "1" o-- "1" LensModel : model
+    Controller "1" o-- "1" PyTorchWarpEngine : engine
+    PyTorchWarpEngine "1" o-- "1" SuperResModel : uses
+    Controller ..> WarpEngine : uses
+    MainWindow "1" *-- "1" Canvas : contains
+    Controller "1" -- "0..1" CameraDialog : creates/manages
+    Controller "1" -- "0..1" PreviewWindow : creates/manages
+    Canvas ..> MeshModel : displays for drawing
+```
+
+#### 4.2. レイヤー別実装契約
+
+- **Model レイヤー (`model.py`)**: 
+    - データの保持とシリアライズ。
+- **Engine レイヤー (`engine.py`, `pytorch_engine.py`)**: 
+    - ステートレスな幾何変換、AI格子検出、物理演算最適化。
+- **Controller レイヤー (`controller.py`)**: 
+    - View/Model/Engine の同期。Signal 購読によるライフサイクル管理。
+- **View レイヤー (`view.py`)**: 
+    - 描画と入力取得。座標の正規化発行。
 
 ### 5. 既知の未解決課題 (Known Open Issues)
 
