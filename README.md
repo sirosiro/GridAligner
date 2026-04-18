@@ -41,22 +41,17 @@
 *   **GUI Framework**: [PySide6 (Qt for Python)](https://www.qt.io/qt-for-python)
 *   **Computer Vision**: [OpenCV](https://opencv.org/)
 *   **Deep Learning / Ops**: [PyTorch](https://pytorch.org/)
-*   **Architecture**: 疎結合な MVC (Model-View-Controller) パターンを採用し、AI によるメンテナンス性と拡張性を確保。
 
 ---
 
 ## インストールと実行
 
-### システム要件
-*   Python 3.10 以上
-*   macOS / Windows / Linux
+### 前提条件
+*   Python 3.9 以上
+*   pip
 
-### セットアップ
+### 手順
 ```bash
-# リポジトリをクローン
-git clone https://github.com/sirosiro/GridAligner.git
-cd GridAligner
-
 # 依存ライブラリのインストール
 pip install -r requirements.txt
 
@@ -70,8 +65,9 @@ python src/main.py
 
 詳細な仕様やアーキテクチャについては、`docs` ディレクトリ内のドキュメントを参照してください。
 
-*   [基本仕様書](docs/spec.md)
+*   [基本仕様書](docs/spec/spec.md)
 *   [アーキテクチャ・マニフェスト](ARCHITECTURE_MANIFEST.md)
+*   [ドキュメント・インデックス](docs/README.md)
 
 ---
 

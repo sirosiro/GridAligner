@@ -6,4 +6,4 @@ __pycache__/
 venv/
 .vscode/
 .idea/
-
+DESIGN_PHILOSOPHY.md

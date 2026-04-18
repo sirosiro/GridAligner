@@ -43,9 +43,9 @@
     *   **GitHub**: [Deltille Detector](https://github.com/deltille/detector)
 
 *   **利便性向上の方針 (Upcoming)**:
-    *   **[AI格子サイズ推定](auto_count_by_AI.md)**: 現在はユーザーが `Rows/Cols`（マスの数）を入力する必要があるが、PyTorch を用いて画像から直接格子点数をカウントし、UIへ自動設定する機能を実装予定。
-    *   **[レンズ補正値の自動推定](auto_lens_correction_by_AI.md)**: ハフ変換等を用いて画像内の「直線の真っ直ぐさ」を数学的に評価し、最適なレンズ歪み係数（k1, k2）をAIが自動で微調整する機能。
-    *   **[外部連携用メタデータの書き出し](export_metadata_for_FFmpeg.md)**: FFmpeg の `lenscorrection` フィルタで使えるコマンド引数の自動生成や、`remap` フィルタ、OpenCV 等で利用可能なマップファイル（LUT）の書き出し機能。これにより、調整したレシピを大容量動画やリアルタイム配信へ適用可能にする。
+    *   **[AI格子サイズ推定](../research/auto_count_by_AI.md)**: 現在はユーザーが `Rows/Cols`（マスの数）を入力する必要があるが、PyTorch を用いて画像から直接格子点数をカウントし、UIへ自動設定する機能を実装予定。
+    *   **[レンズ補正値の自動推定](../research/auto_lens_correction_by_AI.md)**: ハフ変換等を用いて画像内の「直線の真っ直ぐさ」を数学的に評価し、最適なレンズ歪み係数（k1, k2）をAIが自動で微調整する機能。
+    *   **[外部連携用メタデータの書き出し](../research/export_metadata_for_FFmpeg.md)**: FFmpeg の `lenscorrection` フィルタで使えるコマンド引数の自動生成や、`remap` フィルタ、OpenCV 等で利用可能なマップファイル（LUT）の書き出し機能。これにより、調整したレシピを大容量動画やリアルタイム配信へ適用可能にする。
 
 ### 2.4 格子整列機能 (Grid Straighten / Align to Corners)
 物理的な要因（印刷した紙のしなり等）による不要な歪みを排除するための機能。
