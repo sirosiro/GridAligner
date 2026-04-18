@@ -159,16 +159,26 @@ classDiagram
     Canvas ..> MeshModel : displays for drawing
 ```
 
-#### 4.2. レイヤー別実装契約
+#### 4.2. 各クラスの役割詳細 (Component Roles)
 
-- **Model レイヤー (`model.py`)**: 
-    - データの保持とシリアライズ。
-- **Engine レイヤー (`engine.py`, `pytorch_engine.py`)**: 
-    - ステートレスな幾何変換、AI格子検出、物理演算最適化。
-- **Controller レイヤー (`controller.py`)**: 
-    - View/Model/Engine の同期。Signal 購読によるライフサイクル管理。
-- **View レイヤー (`view.py`)**: 
-    - 描画と入力取得。座標の正規化発行。
+##### Model レイヤー (`model.py`)
+- **Point**: 2次元座標（x, y）を保持する最小単位のデータクラス。画像サイズに依存しない正規化された中心座標（0.0 - 1.0）として扱う。
+- **LensModel**: レンズ歪み補正係数（k1, k2）を保持。プロジェクト保存用のシリアライズ（to_dict/from_dict）を備える。
+- **MeshModel**: 格子状メッシュの行数・列数、および全制御点のPointリストを保持。`rotate_clockwise` による座標系の整合性補正を担当。
+
+##### Engine レイヤー (`engine.py`, `pytorch_engine.py`)
+- **WarpEngine**: OpenCVベースの高速画像変換エンジン。ホモグラフィ同期や低解像度グリッドからのマップ生成を担当。
+- **PyTorchWarpEngine**: GPU/並列演算を活用した高度なエンジン。AI格子検出（V2）、物理演算ベースのメッシュ最適化（Smooth Warp）を統括。
+- **SuperResModel**: PyTorchで実装されたCNNベースの超解像モデル。補正によって失われがちな鮮明度をニューラルネットワークで復元。
+
+##### Controller レイヤー (`controller.py`)
+- **Controller**: アプリのライフサイクルとイベントフローを管理。View（入力） -> Model（更新） -> Engine（演算） -> View（表示）の一連の同期を制御し、データの一貫性を保証する。
+
+##### View レイヤー (`view.py`)
+- **MainWindow**: 各UIコントロールの配置と、値をControllerが安全に取得・設定するための抽象化メソッドを提供。
+- **Canvas**: メイン画像と格子メッシュを重畳描画。マウス操作による制御点移動を検知し、正規化座標をSignalとして発行。
+- **PreviewWindow**: 補正完了後の画像をリアルタイムに確認するための専用ウィンドウ。
+- **CameraDialog**: 接続されたカメラからリアルタイムプレビューを表示し、任意のタイミングで画像をキャプチャしてControllerへ渡す。
 
 ### 5. 既知の未解決課題 (Known Open Issues)
 
