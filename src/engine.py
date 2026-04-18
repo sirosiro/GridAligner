@@ -4,180 +4,148 @@ from model import MeshModel, LensModel, Point
 
 class WarpEngine:
     @staticmethod
-    def get_mesh_map(mesh: MeshModel, width: int, height: int):
-        """
-        Generates map_x and map_y for cv2.remap based on the full mesh grid.
-        Maps each pixel in the output (rectified) image to its location in the source.
-        """
-        # grid_pts are the "rectified" coordinates (0,0) to (W,H)
-        # mesh.points are the "distorted" coordinates on the source image
-        
-        # We need to interpolate the mesh points to every pixel in the target image.
-        # Target grid points (0...W, 0...H)
-        out_rows = mesh.rows
-        out_cols = mesh.cols
-        
-        # Points on the source image (distorted)
-        src_points = np.zeros((out_rows, out_cols, 2), dtype=np.float32)
-        for r in range(out_rows):
-            for c in range(out_cols):
-                src_points[r, c] = [mesh.points[r][c].x * (width - 1), 
-                                     mesh.points[r][c].y * (height - 1)]
-        
-        # We want to interpolate these src_points over the entire width x height image.
-        # We can use cv2.resize on the small (out_rows x out_cols) grid to the full resolution.
-        # This acts as bilinear interpolation.
-        
-        full_map = cv2.resize(src_points, (width, height), interpolation=cv2.INTER_LINEAR)
-        map_x = full_map[:, :, 0].astype(np.float32)
-        map_y = full_map[:, :, 1].astype(np.float32)
-        
+    def get_lens_maps(width, height, lens: LensModel):
+        distCoeffs = np.array([lens.k1, lens.k2, 0, 0], dtype=np.float32)
+        f = max(width, height)
+        K = np.array([[f, 0, width/2], [0, f, height/2], [0, 0, 1]], dtype=np.float32)
+        new_K, _ = cv2.getOptimalNewCameraMatrix(K, distCoeffs, (width, height), 0)
+        map_x, map_y = cv2.initUndistortRectifyMap(K, distCoeffs, None, new_K, (width, height), cv2.CV_32FC1)
         return map_x, map_y
 
     @staticmethod
-    def apply_lens_distortion(image, lens: LensModel):
-        if lens.k1 == 0 and lens.k2 == 0:
-            return image
-            
-        h, w = image.shape[:2]
-        distCoeffs = np.array([lens.k1, lens.k2, 0, 0], dtype=np.float32)
-        f = max(w, h)
-        K = np.array([[f, 0, w/2], [0, f, h/2], [0, 0, 1]], dtype=np.float32)
-        
-        new_K, roi = cv2.getOptimalNewCameraMatrix(K, distCoeffs, (w, h), 0)
-        mapx, mapy = cv2.initUndistortRectifyMap(K, distCoeffs, None, new_K, (w, h), 5)
-        return cv2.remap(image, mapx, mapy, cv2.INTER_LINEAR)
+    def get_mesh_map(mesh: MeshModel, src_w: int, src_h: int, dst_w: int, dst_h: int, lens: LensModel = None):
+        out_rows, out_cols = mesh.rows, mesh.cols
+        mesh_pts = np.zeros((out_rows, out_cols, 2), dtype=np.float32)
+        for r in range(out_rows):
+            for c in range(out_cols):
+                mesh_pts[r, c] = [mesh.points[r][c].x * (src_w - 1), 
+                                   mesh.points[r][c].y * (src_h - 1)]
+        full_mesh_map = cv2.resize(mesh_pts, (dst_w, dst_h), interpolation=cv2.INTER_LINEAR)
+        mesh_x = full_mesh_map[:, :, 0]
+        mesh_y = full_mesh_map[:, :, 1]
+        if lens and (lens.k1 != 0 or lens.k2 != 0):
+            lens_map_x, lens_map_y = WarpEngine.get_lens_maps(src_w, src_h, lens)
+            final_map_x = cv2.remap(lens_map_x, mesh_x, mesh_y, cv2.INTER_LINEAR)
+            final_map_y = cv2.remap(lens_map_y, mesh_x, mesh_y, cv2.INTER_LINEAR)
+            return final_map_x, final_map_y
+        return mesh_x, mesh_y
 
     @staticmethod
-    def apply_mesh_rectification(image, mesh: MeshModel):
-        """Perform full grid-based rectification."""
+    def apply_lens_distortion(image, lens: LensModel):
+        if lens.k1 == 0 and lens.k2 == 0: return image
         h, w = image.shape[:2]
-        # In a real tool, we might want to keep the original resolution or some aspect ratio.
-        # For preview, we use the image's original dimensions as the target size.
-        map_x, map_y = WarpEngine.get_mesh_map(mesh, w, h)
+        map_x, map_y = WarpEngine.get_lens_maps(w, h, lens)
+        return cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR)
+
+    @staticmethod
+    def apply_mesh_rectification(image, mesh: MeshModel, lens: LensModel = None):
+        if image is None: return None
+        src_h, src_w = image.shape[:2]
+        dst_aspect = (mesh.cols - 1) / (mesh.rows - 1) if mesh.rows > 1 else 1.0
+        if dst_aspect > 1.0:
+            dst_w, dst_h = src_w, int(src_w / dst_aspect)
+        else:
+            dst_h, dst_w = src_h, int(src_h * dst_aspect)
+        map_x, map_y = WarpEngine.get_mesh_map(mesh, src_w, src_h, dst_w, dst_h, lens)
         return cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR)
 
     @staticmethod
     def sync_perspective(mesh: MeshModel):
-        """Update internal points based on the 4 corners using a homography."""
-        # Corners: TL, TR, BL, BR
-        src_corners = np.array([
-            [0, 0], [1, 0], [0, 1], [1, 1]
-        ], dtype=np.float32)
-        
-        dst_corners = np.array([
-            [mesh.points[0][0].x, mesh.points[0][0].y],
-            [mesh.points[0][-1].x, mesh.points[0][-1].y],
-            [mesh.points[-1][0].x, mesh.points[-1][0].y],
-            [mesh.points[-1][-1].x, mesh.points[-1][-1].y]
-        ], dtype=np.float32)
-        
-        M = cv2.getPerspectiveTransform(src_corners, dst_corners)
-        
+        src = np.array([[0,0],[1,0],[0,1],[1,1]], dtype=np.float32)
+        dst = np.array([[mesh.points[0][0].x, mesh.points[0][0].y],
+                        [mesh.points[0][-1].x, mesh.points[0][-1].y],
+                        [mesh.points[-1][0].x, mesh.points[-1][0].y],
+                        [mesh.points[-1][-1].x, mesh.points[-1][-1].y]], dtype=np.float32)
+        M = cv2.getPerspectiveTransform(src, dst)
         for r in range(mesh.rows):
             for c in range(mesh.cols):
-                target_x = c / (mesh.cols - 1)
-                target_y = r / (mesh.rows - 1)
-                
-                pt = np.array([[[target_x, target_y]]], dtype=np.float32)
-                transformed = cv2.perspectiveTransform(pt, M)
-                
-                mesh.points[r][c].x = float(transformed[0][0][0])
-                mesh.points[r][c].y = float(transformed[0][0][1])
+                tx = c / (mesh.cols - 1) if mesh.cols > 1 else 0.5
+                ty = r / (mesh.rows - 1) if mesh.rows > 1 else 0.5
+                p = cv2.perspectiveTransform(np.array([[[tx,ty]]], dtype=np.float32), M)
+                mesh.points[r][c].x, mesh.points[r][c].y = float(p[0][0][0]), float(p[0][0][1])
 
     @staticmethod
-    def expand_mesh(mesh: MeshModel):
-        """Expand the mesh to cover the largest possible area within the image bounds while preserving perspective."""
-        # 1. Get current homography mapping: distorted -> rectified (unit square)
-        src_pts = np.array([
-            [mesh.points[0][0].x, mesh.points[0][0].y],
-            [mesh.points[0][-1].x, mesh.points[0][-1].y],
-            [mesh.points[-1][0].x, mesh.points[-1][0].y],
-            [mesh.points[-1][-1].x, mesh.points[-1][-1].y]
-        ], dtype=np.float32)
+    def expand_mesh(mesh: MeshModel, img_w: int, img_h: int):
+        """
+        Safety Directional Expansion:
+        Expands in each of 4 directions independently until any point in the next
+        row/column would fall outside the FOV. This prevents point piling at the edges.
+        """
+        # Get current corners in PIXELS
+        src_pts = np.array([[mesh.points[0][0].x * img_w, mesh.points[0][0].y * img_h],
+                            [mesh.points[0][-1].x * img_w, mesh.points[0][-1].y * img_h],
+                            [mesh.points[-1][0].x * img_w, mesh.points[-1][0].y * img_h],
+                            [mesh.points[-1][-1].x * img_w, mesh.points[-1][-1].y * img_h]], dtype=np.float32)
         
-        dst_pts = np.array([[0, 0], [1, 0], [0, 1], [1, 1]], dtype=np.float32)
-        
-    @staticmethod
-    def expand_mesh(mesh: MeshModel):
-        """Expand the mesh until it hits the image boundaries while preserving its perspective."""
-        # 1. Get current homography mapping: distorted -> rectified (unit square [0,1])
-        src_pts = np.array([
-            [mesh.points[0][0].x, mesh.points[0][0].y],
-            [mesh.points[0][-1].x, mesh.points[0][-1].y],
-            [mesh.points[-1][0].x, mesh.points[-1][0].y],
-            [mesh.points[-1][-1].x, mesh.points[-1][-1].y]
-        ], dtype=np.float32)
-        
-        dst_pts = np.array([[0, 0], [1, 0], [0, 1], [1, 1]], dtype=np.float32)
+        # Grid indices corresponding to these points (0 to C-1, 0 to R-1)
+        grid_pts = np.array([[0, 0], [mesh.cols - 1, 0], 
+                             [0, mesh.rows - 1], [mesh.cols - 1, mesh.rows - 1]], dtype=np.float32)
         
         try:
-            H = cv2.getPerspectiveTransform(src_pts, dst_pts)
+            # H maps (x,y) pixels to (u,v) grid coordinates
+            H = cv2.getPerspectiveTransform(src_pts, grid_pts)
             H_inv = np.linalg.inv(H)
-        except (cv2.error, np.linalg.LinAlgError):
-            return 
+        except: return 
 
-        # 2. 拡大率 S を二分探索で求める (1.0 = 現状維持, 10.0 = 超広域)
-        # 画像端のどれかにぶつかるまで、パースを維持したまま正規化空間上で広げる
-        low = 1.0
-        high = 10.0 
-        best_s = 1.0
-        
-        for _ in range(15): # 二分探索 15回で十分な精度
-            mid = (low + high) / 2.0
-            
-            # 正規化空間(0..1)の中心(0.5, 0.5)を基準に mid 倍に広げた四隅を想定
-            # new_u = 0.5 + (u - 0.5) * mid
-            u0, v0 = 0.5 - 0.5 * mid, 0.5 - 0.5 * mid
-            u1, v1 = 0.5 + 0.5 * mid, 0.5 + 0.5 * mid
-            
-            test_rect = np.array([
-                [[u0, v0]], [[u1, v0]], [[u0, v1]], [[u1, v1]]
-            ], dtype=np.float32)
-            
-            # 画像空間（歪みのある空間）へ逆投影
-            proj = cv2.perspectiveTransform(test_rect, H_inv)
-            
-            # すべての点が 0.0 ~ 1.0 に収まっているかチェック
-            in_bound = True
-            for i in range(4):
-                px, py = proj[i][0]
-                if px < 0 or px > 1 or py < 0 or py > 1:
-                    in_bound = False
-                    break
-            
-            if in_bound:
-                best_s = mid
-                low = mid
-            else:
-                high = mid
+        def is_within_fov(u, v):
+            # Transform grid coord (u,v) back to pixel coord
+            px = cv2.perspectiveTransform(np.array([[[u, v]]], dtype=np.float32), H_inv)[0][0]
+            return 0 <= px[0] <= img_w and 0 <= px[1] <= img_h
 
-        # 3. 確定した best_s で四隅を更新
-        u0, v0 = 0.5 - 0.5 * best_s, 0.5 - 0.5 * best_s
-        u1, v1 = 0.5 + 0.5 * best_s, 0.5 + 0.5 * best_s
-        final_rect = np.array([[[u0, v0]], [[u1, v0]], [[u0, v1]], [[u1, v1]]], dtype=np.float32)
-        final_proj = cv2.perspectiveTransform(final_rect, H_inv)
+        def check_row_fov(v, u_start, u_end):
+            # Check multiple points across the row to be safe
+            for u in np.linspace(u_start, u_end, 5):
+                if not is_within_fov(u, v): return False
+            return True
+
+        def check_col_fov(u, v_start, v_end):
+            # Check multiple points across the column to be safe
+            for v in np.linspace(v_start, v_end, 5):
+                if not is_within_fov(u, v): return False
+            return True
+
+        # Initial relative grid bounds
+        u_start, u_end = 0.0, float(mesh.cols - 1)
+        v_start, v_end = 0.0, float(mesh.rows - 1)
+
+        # Iteratively expand each direction until failure
+        changed = True
+        while changed:
+            changed = False
+            # Try LEFT (Decrease u_start)
+            if check_col_fov(u_start - 1, v_start, v_end):
+                u_start -= 1; changed = True
+            # Try RIGHT (Increase u_end)
+            if check_col_fov(u_end + 1, v_start, v_end):
+                u_end += 1; changed = True
+            # Try TOP (Decrease v_start)
+            if check_row_fov(v_start - 1, u_start, u_end):
+                v_start -= 1; changed = True
+            # Try BOTTOM (Increase v_end)
+            if check_row_fov(v_end + 1, u_start, u_end):
+                v_end += 1; changed = True
+            
+            # Guard to prevent infinite or extreme growth
+            if (u_end - u_start) > 100 or (v_end - v_start) > 100:
+                break
+
+        # Calculate final dimensions
+        new_cols = int(round(u_end - u_start)) + 1
+        new_rows = int(round(v_end - v_start)) + 1
         
-        mesh.points[0][0].x, mesh.points[0][0].y = final_proj[0][0]
-        mesh.points[0][-1].x, mesh.points[0][-1].y = final_proj[1][0]
-        mesh.points[-1][0].x, mesh.points[-1][0].y = final_proj[2][0]
-        mesh.points[-1][-1].x, mesh.points[-1][-1].y = final_proj[3][0]
+        mesh.rows = new_rows
+        mesh.cols = new_cols
+        mesh.reset()
         
-        # 4. 内部格子を再生成
-        WarpEngine.sync_perspective(mesh)
+        # Map grid [0..C-1] back to [u_start..u_end] and then to image
+        for r in range(new_rows):
+            for c in range(new_cols):
+                u, v = u_start + c, v_start + r
+                px = cv2.perspectiveTransform(np.array([[[u, v]]], dtype=np.float32), H_inv)[0][0]
+                mesh.points[r][c].x = float(max(0, min(img_w, px[0])) / img_w)
+                mesh.points[r][c].y = float(max(0, min(img_h, px[1])) / img_h)
 
     @staticmethod
     def process_preview(image, mesh: MeshModel, lens: LensModel, rectified=False):
-        # 1. Apply Lens correction first (or should it be mesh first? usually lens correction first)
-        # Actually, the user aligns the mesh ON the distorted image. 
-        # So we should apply lens distortion to the image BEFORE mesh rectification if we want to "correct" both.
-        # However, the preview shows the "Rectified" result.
-        
-        # Step A: Apply lens distortion (undistort)
-        temp = WarpEngine.apply_lens_distortion(image, lens)
-        
-        if rectified:
-            # Step B: Apply mesh rectification on the (already lens-corrected) image
-            return WarpEngine.apply_mesh_rectification(temp, mesh)
-            
-        return temp
+        if rectified: return WarpEngine.apply_mesh_rectification(image, mesh, lens)
+        return WarpEngine.apply_lens_distortion(image, lens)

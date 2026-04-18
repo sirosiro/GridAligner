@@ -80,11 +80,12 @@ class Controller:
         image_for_auto = WarpEngine.apply_lens_distortion(self.original_image, self.lens)
         
         # 1. 検出実行
-        new_pts, a_rows, a_cols = self.py_engine.detect_initial_grid(
+        res = self.py_engine.detect_initial_grid(
             image_for_auto, target_rows=curr_r, target_cols=curr_c
         )
         
-        if new_pts and a_rows >= 2 and a_cols >= 2:
+        if res:
+            new_pts, a_rows, a_cols = res
             # UI の値を更新
             self.view.set_grid_dimensions(a_rows, a_cols)
             
@@ -145,9 +146,12 @@ class Controller:
         self.update_preview()
 
     def expand_mesh_to_full_frame(self):
-        WarpEngine.expand_mesh(self.mesh)
-        self.view.canvas.update()
-        self.update_preview()
+        if self.original_image is not None:
+            h, w = self.original_image.shape[:2]
+            WarpEngine.expand_mesh(self.mesh, w, h)
+            self.view.set_grid_dimensions(self.mesh.rows, self.mesh.cols)
+            self.view.canvas.update()
+            self.update_preview()
 
     def rotate_grid(self):
         """
@@ -253,7 +257,7 @@ class Controller:
 
         try:
             # Process the original BGR image for export (preserve original colors/quality)
-            rectified = WarpEngine.process_preview(self.original_image, self.mesh, self.lens, rectified=True)
+            rectified = WarpEngine.apply_mesh_rectification(self.original_image, self.mesh, self.lens)
             
             # 日本語パス対応
             ext = os.path.splitext(file_path)[1]
