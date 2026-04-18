@@ -2,6 +2,8 @@
 
 直感的なメッシュ操作と AI 自動検出を融合させた、次世代の画像幾何学歪み補正ツール。
 
+![Main Snapshot](docs/assets/main_snapshot.png)
+
 ---
 
 ## 概要
