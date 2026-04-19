@@ -1,6 +1,6 @@
 import sys
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QPushButton, QSlider, QLabel, QFileDialog, QFrame, QCheckBox, QDialog, QSpinBox, QSizePolicy)
+                             QPushButton, QSlider, QLabel, QFileDialog, QFrame, QCheckBox, QDialog, QSpinBox, QSizePolicy, QProgressBar)
 from PySide6.QtCore import Qt, QPointF, Signal, Slot, QTimer
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush, QAction
 import cv2
@@ -262,7 +262,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GridAligner")
-        self.resize(1100, 750)
+        self.resize(1100, 850) # 少し縦を広げる
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -277,6 +277,17 @@ class MainWindow(QMainWindow):
         self.canvas.setFocusPolicy(Qt.StrongFocus)
         left_layout.addWidget(self.canvas, stretch=1)
         
+        # 進捗バーの追加
+        self.progress_container = QWidget()
+        self.progress_container.setVisible(False)
+        p_layout = QVBoxLayout(self.progress_container)
+        self.lbl_progress = QLabel("Processing...")
+        p_layout.addWidget(self.lbl_progress)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        p_layout.addWidget(self.progress_bar)
+        left_layout.addWidget(self.progress_container)
+
         self.lbl_path = QLabel("No image loaded")
         self.lbl_path.setWordWrap(True)
         self.lbl_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -346,6 +357,15 @@ class MainWindow(QMainWindow):
         self.btn_rotate = QPushButton("↻ Rotate Grid (90° CW)")
         self.btn_rotate.setToolTip("Rotate the grid orientation by 90 degrees clockwise.")
         controls_layout.addWidget(self.btn_rotate)
+
+        controls_layout.addSpacing(10)
+        line_lens = QFrame(); line_lens.setFrameShape(QFrame.HLine); line_lens.setFrameShadow(QFrame.Sunken)
+        controls_layout.addWidget(line_lens)
+        controls_layout.addWidget(QLabel("<b>Lens Correction</b>"))
+
+        self.btn_auto_lens = QPushButton("✨ Auto Lens Correction")
+        self.btn_auto_lens.setStyleSheet("background-color: #009688; color: white; font-weight: bold;")
+        controls_layout.addWidget(self.btn_auto_lens)
 
         k1_layout = QHBoxLayout()
         k1_layout.addWidget(QLabel("k1 (Barrel/Pincushion)"))
@@ -427,6 +447,7 @@ class MainWindow(QMainWindow):
     def set_lens_params(self, k1, k2):
         self.slider_k1.setValue(int(k1 * 100))
         self.slider_k2.setValue(int(k2 * 500))
+        self._update_labels()
 
     def is_preview_enabled(self):
         return self.check_preview.isChecked()
@@ -444,6 +465,13 @@ class MainWindow(QMainWindow):
     def set_crosshair_visible(self, visible):
         self.canvas.show_crosshair = visible
         self.canvas.update()
+
+    def set_progress_visible(self, visible):
+        self.progress_container.setVisible(visible)
+
+    def update_progress(self, value, text):
+        self.progress_bar.setValue(value)
+        self.lbl_progress.setText(text)
 
     def _update_labels(self):
         k1, k2 = self.get_lens_params()

@@ -16,6 +16,8 @@
 
 - **ステートレスな Engine**: Engine 階層の関数は内部状態を持たず、Model を外部から受け取って処理結果を返す（Side-effect free）設計を維持する。
 - **UI イベントの正規化**: View (Canvas) から Controller へ送られる座標は、常にスクリーン座標ではなく画像相対の正規化座標 (0.0-1.0) である。
+- **非同期処理の安全性 (Asynchronous Safety)**:
+    - 自動レンズ補正などの重い演算は、UI スレッドをブロックしないよう非同期（Worker）で実行し、排他制御（演算中の重複リクエスト禁止）を徹底する。
 
 ### 4. コンポーネント設計仕様 (Component Design Specifications)
 
@@ -61,6 +63,7 @@ classDiagram
             +apply_mesh_rectification(image_np, mesh)
             +detect_initial_grid(image_np, target_rows, target_cols)
             +estimate_grid_dimensions(image_np)
+            +estimate_lens_parameters(image_np, progress_callback)
             +apply_lens_distortion(img_tensor, lens)
             +minimize_energy(mesh, fixed_indices)
             +process_all(image_np, mesh, lens, use_sr)
@@ -115,6 +118,8 @@ classDiagram
             +is_super_res_enabled()
             +is_smooth_warp_enabled()
             +reset_lens_sliders()
+            +set_progress_visible(bool)
+            +update_progress(value, text)
             +rotate_grid()
             +set_grid_visible(bool)
             +set_crosshair_visible(bool)
@@ -136,6 +141,7 @@ classDiagram
             +extract_grid_from_filename(path)
             +update_lens()
             +update_preview()
+            +on_auto_lens_correction()
             +resize_mesh()
             +reset_mesh()
             +straighten_grid()
@@ -175,16 +181,20 @@ classDiagram
 - **WarpEngine**: OpenCVベースの高速画像変換エンジン。ホモグラフィ同期や低解像度グリッドからのマップ生成を担当。
 - **PyTorchWarpEngine**: GPU/並列演算を活用した高度なエンジン。AI格子検出（V2）、物理演算ベースのメッシュ最適化（Smooth Warp）を統括。
 - **estimate_grid_dimensions(image_np)**: 画像のエッジ投影プロファイルを解析し、格子点数（rows, cols）を自律的に推定する。
+- **estimate_lens_parameters(image_np, progress_callback)**: 
+    - **保守的最適化ポリシー**: 画像内の支配的なエッジ（外郭等）をサンプリングし、物理的な面積保存制約を最優先しつつ、直線性が最大化される $k1, k2$ を探索する。
+    - **安全装置**: 推定値の暴走（オーバーシュート）を防ぐため、勾配降下法の学習率を抑制し、強い形状維持ペナルティを課すことで、手動調整に近い堅実な結果を保証する。
 - **SuperResModel**: PyTorchで実装されたCNNベースの超解像モデル。補正によって失われがちな鮮明度をニューラルネットワークで復元。
 
 ##### Controller レイヤー (`controller.py`)
 - **Controller**: アプリのライフサイクルとイベントフローを管理。View（入力） -> Model（更新） -> Engine（演算） -> View（表示）の一連の同期を制御し、データの一貫性を保証する。
+- **on_auto_lens_correction**: PyTorch Engine を非同期スレッドで呼び出し、画像内の直線性エネルギーを最小化する $k1, k2$ を探索する。
 - **extract_grid_from_filename(path)**: ファイル名に含まれる `8x10` 等のパターンを正規表現で抽出し、初期設定のヒントとして利用する。
 
 ##### View レイヤー (`view.py`)
 - **MainWindow**: 各UIコントロールの配置と、値をControllerが安全に取得・設定するための抽象化メソッドを提供。
 - **Canvas**: メイン画像と格子メッシュを重畳描画。マウス操作による制御点移動を検知し、正規化座標をSignalとして発行。
-- **PreviewWindow**: 補正完了後の画像をリアルタイムに確認するための専用ウィンドウ。ウィンドウのリサイズに追従して表示内容を自動的にスケーリングし、視覚的な一貫性を維持する。また、画像の元のサイズに依存せず、ユーザーが自由に拡大・縮小（Shrink）できる柔軟なリサイズ性能を保証しなければならない。
+- **PreviewWindow**: 補正完了後の画像をリアルタイムに確認するための専用ウィンドウ。ウィンドウのリサイズに追従して表示内容を自動的にスケーリングし、視認性を維持する。また、画像の元のサイズに依存せず、ユーザーが自由に拡大・縮小（Shrink）できる柔軟なリサイズ性能を保証しなければならない。
 - **CameraDialog**: 接続されたカメラからリアルタイムプレビューを表示し、任意のタイミングで画像をキャプチャしてControllerへ渡す。
 
 ### 5. 既知の未解決課題 (Known Open Issues)

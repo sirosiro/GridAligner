@@ -5,10 +5,36 @@ import os
 import re
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtCore import QThread, Signal, Qt
 from model import MeshModel, LensModel, Point
 from engine import WarpEngine
 from pytorch_engine import PyTorchWarpEngine
 from view import PreviewWindow, CameraDialog
+
+class LensWorker(QThread):
+    """
+    レンズ歪み推定をバックグラウンドで実行し、進捗を報告するワーカークラス。
+    """
+    finished = Signal(float, float)
+    progress = Signal(int, str)
+    
+    def __init__(self, engine, image):
+        super().__init__()
+        self.engine = engine
+        self.image = image
+        
+    def run(self):
+        def cb(curr, total, loss):
+            # 進捗率とステータス文字列を送信
+            pct = int(curr / total * 100)
+            self.progress.emit(pct, f"Optimizing Lens... Step {curr}/{total} (Loss: {loss:.6f})")
+            
+        try:
+            k1, k2 = self.engine.estimate_lens_parameters(self.image, progress_callback=cb)
+            self.finished.emit(k1, k2)
+        except Exception as e:
+            # 簡略化のためエラー時も0,0を返すが、本来はエラー報告が望ましい
+            self.finished.emit(0.0, 0.0)
 
 class Controller:
     def __init__(self, view, model_mesh, model_lens):
@@ -19,6 +45,7 @@ class Controller:
         self.original_image = None
         self.preview_window = None
         self.camera_dialog = None
+        self.lens_worker = None
         
         # V2 Engines
         self.py_engine = PyTorchWarpEngine()
@@ -36,6 +63,7 @@ class Controller:
         
         # V2 signals
         self.view.btn_auto_grid.clicked.connect(self.on_auto_grid)
+        self.view.btn_auto_lens.clicked.connect(self.on_auto_lens_correction)
         self.view.check_super_res.stateChanged.connect(self.update_preview)
         self.view.check_smooth_warp.stateChanged.connect(lambda: None) # Optional setting
         
@@ -104,6 +132,43 @@ class Controller:
                 "Could not detect grid pattern.\n"
                 "Please ensure the image contains clear lines or a checkerboard.")
 
+    def on_auto_lens_correction(self):
+        """
+        AIによる自動レンズ補正（直線性の最適化）を開始します。
+        """
+        if self.original_image is None:
+            QMessageBox.warning(self.view, "AI Features", "Please open an image first.")
+            return
+            
+        # UIの無効化とプログレス表示の開始
+        self.view.btn_auto_lens.setEnabled(False)
+        self.view.set_progress_visible(True)
+        self.view.update_progress(0, "Analyzing lines...")
+        
+        # バックグラウンドスレッドで実行
+        self.lens_worker = LensWorker(self.py_engine, self.original_image)
+        self.lens_worker.progress.connect(self.view.update_progress)
+        self.lens_worker.finished.connect(self.on_auto_lens_finished)
+        self.lens_worker.start()
+
+    def on_auto_lens_finished(self, k1, k2):
+        """
+        自動補正完了時の処理。
+        """
+        self.lens.k1 = k1
+        self.lens.k2 = k2
+        
+        # UIへの反映
+        self.view.set_lens_params(k1, k2)
+        
+        # UIの復元
+        self.view.set_progress_visible(False)
+        self.view.btn_auto_lens.setEnabled(True)
+        
+        self.update_preview()
+        QMessageBox.information(self.view, "AI Features", 
+            f"Auto Lens Correction Finished.\nEstimated: k1={k1:.4f}, k2={k2:.4f}")
+
     def resize_mesh(self):
         rows, cols = self.view.get_grid_dimensions()
         self.mesh.rows = rows
@@ -137,15 +202,15 @@ class Controller:
         """
         if not path: return None
         filename = os.path.basename(path)
-        # 8x10, 8-10, (8,10) 等のパターンにマッチ
-        match = re.search(r'(\d+)[\s x,X\-_](\d+)', filename)
+        # 8x10, 8-10, 8 by 10, 8_x_10 等の多様なパターンにマッチ
+        match = re.search(r'(\d+)[^0-9]+(\d+)', filename)
         if match:
             try:
-                rows = int(match.group(1))
-                cols = int(match.group(2))
+                val1 = int(match.group(1))
+                val2 = int(match.group(2))
                 # 極端に小さい値（1以下）は無視
-                if rows > 1 and cols > 1:
-                    return rows, cols
+                if val1 > 1 and val2 > 1:
+                    return val1, val2
             except ValueError:
                 pass
         return None
