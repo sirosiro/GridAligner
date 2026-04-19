@@ -77,11 +77,13 @@ def test_controller_clean_load(mock_view):
     
     # Load new image
     dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+    # Note: load_new_image now performs AI estimation.
+    # For a blank image, it will estimate a minimal 2x2 grid.
     ctrl.load_new_image(dummy_img, path="/test/path/image.png")
     
     # Verify reset
     assert ctrl.lens.k1 == 0.0
-    # The mesh rows should match whatever get_grid_dimensions returns (mocked to 3)
-    assert ctrl.mesh.rows == mock_view.get_grid_dimensions()[0]
+    # Expected 2 due to AI estimation on blank image
+    assert ctrl.mesh.rows == 2
     assert mock_view.reset_to_default.called
     mock_view.set_image_path.assert_called_with("/test/path/image.png")

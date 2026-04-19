@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import json
 import os
+import re
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 from model import MeshModel, LensModel, Point
@@ -130,6 +131,25 @@ class Controller:
         self.camera_dialog.exec()
         self.camera_dialog.stop_camera()
 
+    def extract_grid_from_filename(self, path):
+        """
+        ファイル名から '8x10' や '10x8' といった格子数パターンを抽出します。
+        """
+        if not path: return None
+        filename = os.path.basename(path)
+        # 8x10, 8-10, (8,10) 等のパターンにマッチ
+        match = re.search(r'(\d+)[\s x,X\-_](\d+)', filename)
+        if match:
+            try:
+                rows = int(match.group(1))
+                cols = int(match.group(2))
+                # 極端に小さい値（1以下）は無視
+                if rows > 1 and cols > 1:
+                    return rows, cols
+            except ValueError:
+                pass
+        return None
+
     def load_new_image(self, image, path=None):
         if image is not None:
             self.original_image = image
@@ -140,12 +160,30 @@ class Controller:
             self.view.reset_to_default()
             self.view.set_image_path(path)
             
-            # メッシュもデフォルトサイズでリセット
-            rows, cols = self.view.get_grid_dimensions()
-            self.mesh.rows = rows
-            self.mesh.cols = cols
-            self.mesh.reset()
+            # インテリジェント・初期化原則: 格子数の自動推定
+            est_rows, est_cols = None, None
             
+            # 1. ファイル名からのメタデータ抽出を優先
+            meta = self.extract_grid_from_filename(path)
+            if meta:
+                est_rows, est_cols = meta
+            else:
+                # 2. AIによる推定（プロファイル解析）
+                est_rows, est_cols = self.py_engine.estimate_grid_dimensions(image)
+            
+            if est_rows and est_cols:
+                # 推定値を UI に反映（これにより resize_mesh が呼ばれる可能性があるが、
+                # ここでは直接 mesh をセットアップする）
+                self.view.set_grid_dimensions(est_rows, est_cols)
+                self.mesh.rows = est_rows
+                self.mesh.cols = est_cols
+            else:
+                # 失敗した場合は現在のUI値（デフォルト等）を使用
+                rows, cols = self.view.get_grid_dimensions()
+                self.mesh.rows = rows
+                self.mesh.cols = cols
+                
+            self.mesh.reset()
             self.view.canvas.set_mesh(self.mesh)
             self.update_preview()
 

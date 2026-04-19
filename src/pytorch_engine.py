@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 import cv2
 import os
+import re
 from model import MeshModel, LensModel, Point
 
 os.environ["OPENCV_OPENCL_RUNTIME"] = "disabled"
@@ -40,6 +41,54 @@ class PyTorchWarpEngine:
         dist = 1 + lens.k1 * r2 + lens.k2 * (r2**2)
         return torch.stack((xx * 2 * dist, yy * 2 * dist * (w/h)), dim=-1).unsqueeze(0)
 
+    def _find_grid_lines(self, hist, size, expected=None):
+        """
+        ヒストグラムからピーク（格子の線）を検出します。
+        expected が指定されている場合は、その数に近い結果が得られるよう調整します。
+        expected が None の場合は、自律的にピーク数をカウントします。
+        """
+        sigma = 21 if expected and expected > 10 else 51
+        blurred = cv2.GaussianBlur(hist.astype(np.float32), (sigma, 1), 0).flatten()
+        
+        peaks = []
+        # expected がない場合は、ヒストグラムの解像度から最小ギャップを推定
+        min_gap = size / (expected + 2) if expected else size * 0.03
+        thresh = np.mean(blurred) * 1.1
+        
+        for i in range(1, len(blurred)-1):
+            if blurred[i] > blurred[i-1] and blurred[i] > blurred[i+1] and blurred[i] > thresh:
+                if not peaks or abs(i - peaks[-1]) > min_gap:
+                    peaks.append(i)
+        
+        if not peaks:
+            return [size * (i/(expected-1)) for i in range(expected)] if expected else [size*0.1, size*0.9]
+            
+        # 期待値がある場合の補完ロジック
+        if expected and len(peaks) != expected:
+            gap = np.median(np.diff(peaks)) if len(peaks) > 1 else size * 0.1
+            while len(peaks) < expected and peaks[0] > gap * 1.5:
+                peaks.insert(0, peaks[0] - gap)
+            while len(peaks) < expected and peaks[-1] < size - gap * 1.5:
+                peaks.append(peaks[-1] + gap)
+        
+        return peaks
+
+    def estimate_grid_dimensions(self, image_np):
+        """
+        AI（プロファイル解析）を用いて画像の格子数を推定します。
+        """
+        h, w = image_np.shape[:2]
+        # Cannyエッジ検出の合成
+        edges = np.zeros((h, w), dtype=np.uint8)
+        for i in range(3):
+            edges = cv2.bitwise_or(edges, cv2.Canny(image_np[:, :, i], 50, 150))
+        
+        y_lines = self._find_grid_lines(np.sum(edges, axis=1), h, expected=None)
+        x_lines = self._find_grid_lines(np.sum(edges, axis=0), w, expected=None)
+        
+        # 検出されたピーク数を格子数（rows, cols）として返す
+        return len(y_lines), len(x_lines)
+
     def detect_initial_grid(self, image_np, target_rows=None, target_cols=None):
         h, w = image_np.shape[:2]
         gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
@@ -73,28 +122,13 @@ class PyTorchWarpEngine:
                             return res_pts, target_rows, target_cols
                 except: continue
 
-        # --- Tier 2: Statistical Profile Analysis (Restored Original) ---
+        # --- Tier 2: Statistical Profile Analysis ---
         edges = np.zeros((h, w), dtype=np.uint8)
         for i in range(3):
             edges = cv2.bitwise_or(edges, cv2.Canny(image_np[:, :, i], 50, 150))
         
-        def find_grid_lines(hist, size, expected):
-            sigma = 21 if expected and expected > 10 else 51
-            blurred = cv2.GaussianBlur(hist.astype(np.float32), (sigma, 1), 0).flatten()
-            peaks = []
-            min_gap = size / (expected + 2) if expected else size * 0.03
-            thresh = np.mean(blurred) * 1.1
-            for i in range(1, len(blurred)-1):
-                if blurred[i] > blurred[i-1] and blurred[i] > blurred[i+1] and blurred[i] > thresh:
-                    if not peaks or abs(i - peaks[-1]) > min_gap: peaks.append(i)
-            if not peaks: return [size * (i/(expected-1)) for i in range(expected)] if expected else [size*0.1, size*0.9]
-            gap = np.median(np.diff(peaks)) if len(peaks) > 1 else size * 0.1
-            while peaks[0] > gap * 1.5: peaks.insert(0, peaks[0] - gap)
-            while peaks[-1] < size - gap * 1.5: peaks.append(peaks[-1] + gap)
-            return peaks
-
-        y_lines = find_grid_lines(np.sum(edges, axis=1), h, target_rows)
-        x_lines = find_grid_lines(np.sum(edges, axis=0), w, target_cols)
+        y_lines = self._find_grid_lines(np.sum(edges, axis=1), h, target_rows)
+        x_lines = self._find_grid_lines(np.sum(edges, axis=0), w, target_cols)
         rows, cols = len(y_lines), len(x_lines)
         
         crude = np.array([[x, y] for y in y_lines for x in x_lines], dtype=np.float32).reshape(-1, 1, 2)

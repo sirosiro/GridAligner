@@ -60,6 +60,7 @@ classDiagram
             -SuperResModel sr_model
             +apply_mesh_rectification(image_np, mesh)
             +detect_initial_grid(image_np, target_rows, target_cols)
+            +estimate_grid_dimensions(image_np)
             +apply_lens_distortion(img_tensor, lens)
             +minimize_energy(mesh, fixed_indices)
             +process_all(image_np, mesh, lens, use_sr)
@@ -129,6 +130,7 @@ classDiagram
             +open_image()
             +open_camera()
             +load_new_image(image)
+            +extract_grid_from_filename(path)
             +update_lens()
             +update_preview()
             +resize_mesh()
@@ -169,10 +171,12 @@ classDiagram
 ##### Engine レイヤー (`engine.py`, `pytorch_engine.py`)
 - **WarpEngine**: OpenCVベースの高速画像変換エンジン。ホモグラフィ同期や低解像度グリッドからのマップ生成を担当。
 - **PyTorchWarpEngine**: GPU/並列演算を活用した高度なエンジン。AI格子検出（V2）、物理演算ベースのメッシュ最適化（Smooth Warp）を統括。
+- **estimate_grid_dimensions(image_np)**: 画像のエッジ投影プロファイルを解析し、格子点数（rows, cols）を自律的に推定する。
 - **SuperResModel**: PyTorchで実装されたCNNベースの超解像モデル。補正によって失われがちな鮮明度をニューラルネットワークで復元。
 
 ##### Controller レイヤー (`controller.py`)
 - **Controller**: アプリのライフサイクルとイベントフローを管理。View（入力） -> Model（更新） -> Engine（演算） -> View（表示）の一連の同期を制御し、データの一貫性を保証する。
+- **extract_grid_from_filename(path)**: ファイル名に含まれる `8x10` 等のパターンを正規表現で抽出し、初期設定のヒントとして利用する。
 
 ##### View レイヤー (`view.py`)
 - **MainWindow**: 各UIコントロールの配置と、値をControllerが安全に取得・設定するための抽象化メソッドを提供。
