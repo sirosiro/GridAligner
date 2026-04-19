@@ -425,5 +425,7 @@ class MainWindow(QMainWindow):
         self.slider_k2.setValue(0)
         self._update_labels()
 
-    def is_smooth_warp_enabled(self):
-        return self.check_smooth_warp.isChecked()
+    def reset_to_default(self):
+        """全ての補正パラメータを初期状態にリセットします。"""
+        self.set_grid_dimensions(9, 9)
+        self.reset_lens_sliders()

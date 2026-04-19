@@ -133,6 +133,19 @@ class Controller:
     def load_new_image(self, image):
         if image is not None:
             self.original_image = image
+            
+            # クリーンロード原則に基づき、パラメータをリセット
+            self.lens.k1 = 0.0
+            self.lens.k2 = 0.0
+            self.view.reset_to_default()
+            
+            # メッシュもデフォルトサイズでリセット
+            rows, cols = self.view.get_grid_dimensions()
+            self.mesh.rows = rows
+            self.mesh.cols = cols
+            self.mesh.reset()
+            
+            self.view.canvas.set_mesh(self.mesh)
             self.update_preview()
 
     def reset_mesh(self):

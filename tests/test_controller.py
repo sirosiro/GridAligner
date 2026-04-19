@@ -2,6 +2,7 @@ import sys
 import os
 import pytest
 import json
+import numpy as np
 from unittest.mock import MagicMock
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
 
@@ -64,3 +65,22 @@ def test_project_persistence(mock_view, tmp_path):
         
     assert ctrl2.lens.k1 == 0.2
     assert ctrl2.mesh.rows == 2
+
+def test_controller_clean_load(mock_view):
+    mesh = MeshModel(rows=5, cols=5)
+    lens = LensModel(k1=0.5)
+    ctrl = Controller(mock_view, mesh, lens)
+    
+    # Simulate some changes
+    ctrl.lens.k1 = 0.5
+    ctrl.mesh.rows = 10
+    
+    # Load new image
+    dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+    ctrl.load_new_image(dummy_img)
+    
+    # Verify reset
+    assert ctrl.lens.k1 == 0.0
+    # The mesh rows should match whatever get_grid_dimensions returns (mocked to 3)
+    assert ctrl.mesh.rows == mock_view.get_grid_dimensions()[0]
+    assert mock_view.reset_to_default.called
