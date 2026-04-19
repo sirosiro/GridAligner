@@ -100,7 +100,10 @@ classDiagram
         }
         class PreviewWindow {
             +QLabel label
+            -QPixmap current_pixmap
             +set_image(qimage)
+            +update_display()
+            +resizeEvent(event)
         }
         class MainWindow {
             +Canvas canvas
@@ -181,7 +184,7 @@ classDiagram
 ##### View レイヤー (`view.py`)
 - **MainWindow**: 各UIコントロールの配置と、値をControllerが安全に取得・設定するための抽象化メソッドを提供。
 - **Canvas**: メイン画像と格子メッシュを重畳描画。マウス操作による制御点移動を検知し、正規化座標をSignalとして発行。
-- **PreviewWindow**: 補正完了後の画像をリアルタイムに確認するための専用ウィンドウ。
+- **PreviewWindow**: 補正完了後の画像をリアルタイムに確認するための専用ウィンドウ。ウィンドウのリサイズに追従して表示内容を自動的にスケーリングし、視覚的な一貫性を維持する。また、画像の元のサイズに依存せず、ユーザーが自由に拡大・縮小（Shrink）できる柔軟なリサイズ性能を保証しなければならない。
 - **CameraDialog**: 接続されたカメラからリアルタイムプレビューを表示し、任意のタイミングで画像をキャプチャしてControllerへ渡す。
 
 ### 5. 既知の未解決課題 (Known Open Issues)

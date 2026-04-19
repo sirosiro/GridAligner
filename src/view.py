@@ -1,6 +1,6 @@
 import sys
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QPushButton, QSlider, QLabel, QFileDialog, QFrame, QCheckBox, QDialog, QSpinBox)
+                             QPushButton, QSlider, QLabel, QFileDialog, QFrame, QCheckBox, QDialog, QSpinBox, QSizePolicy)
 from PySide6.QtCore import Qt, QPointF, Signal, Slot, QTimer
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QBrush, QAction
 import cv2
@@ -229,16 +229,34 @@ class PreviewWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Rectified Preview")
+        
         self.label = QLabel("No image loaded")
         self.label.setAlignment(Qt.AlignCenter)
         self.label.setStyleSheet("background-color: #222; color: #888;")
+        
+        # 縮小リサイズを可能にするための設定
+        # QLabelはデフォルトでpixmapサイズに固執するため、最小サイズを解除する
+        self.label.setMinimumSize(1, 1)
+        self.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        
         self.setCentralWidget(self.label)
         self.resize(600, 450)
+        self.current_pixmap = None
 
     def set_image(self, qimage):
         if qimage.isNull(): return
-        pixmap = QPixmap.fromImage(qimage)
-        self.label.setPixmap(pixmap.scaled(self.label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.current_pixmap = QPixmap.fromImage(qimage)
+        self.update_display()
+
+    def update_display(self):
+        if self.current_pixmap:
+            # ラベルの現在の（レイアウトによって決定された）サイズに合わせてスケーリング
+            self.label.setPixmap(self.current_pixmap.scaled(
+                self.label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def resizeEvent(self, event):
+        self.update_display()
+        super().resizeEvent(event)
 
 class MainWindow(QMainWindow):
     def __init__(self):
