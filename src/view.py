@@ -250,10 +250,22 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         layout = QHBoxLayout(central_widget)
 
-        # Left: Canvas
+        # Left: Canvas + Path Info
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.canvas = Canvas()
         self.canvas.setFocusPolicy(Qt.StrongFocus)
-        layout.addWidget(self.canvas, stretch=4)
+        left_layout.addWidget(self.canvas, stretch=1)
+        
+        self.lbl_path = QLabel("No image loaded")
+        self.lbl_path.setWordWrap(True)
+        self.lbl_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.lbl_path.setStyleSheet("color: #aaa; background-color: #1a1a1a; padding: 4px; border-top: 1px solid #333;")
+        left_layout.addWidget(self.lbl_path)
+        
+        layout.addWidget(left_panel, stretch=4)
 
         # Right: Controls
         controls = QWidget()
@@ -429,3 +441,14 @@ class MainWindow(QMainWindow):
         """全ての補正パラメータを初期状態にリセットします。"""
         self.set_grid_dimensions(9, 9)
         self.reset_lens_sliders()
+
+    def set_image_path(self, path):
+        """画像パスの表示を更新します。ファイル名を強調表示します。"""
+        if not path:
+            self.lbl_path.setText("No image loaded")
+            return
+            
+        import os
+        basename = os.path.basename(path)
+        # HTML形式でファイル名を強調
+        self.lbl_path.setText(f"<b>File: {basename}</b><br><small>{path}</small>")

@@ -119,18 +119,18 @@ class Controller:
             # 日本語パス対応
             n = np.fromfile(file_path, np.uint8)
             image = cv2.imdecode(n, cv2.IMREAD_COLOR)
-            self.load_new_image(image)
+            self.load_new_image(image, path=file_path)
 
     def open_camera(self):
         if not self.camera_dialog:
             self.camera_dialog = CameraDialog(self.view)
-            self.camera_dialog.imageCaptured.connect(self.load_new_image)
+            self.camera_dialog.imageCaptured.connect(lambda img: self.load_new_image(img, path="Captured from Camera"))
         
         self.camera_dialog.start_camera()
         self.camera_dialog.exec()
         self.camera_dialog.stop_camera()
 
-    def load_new_image(self, image):
+    def load_new_image(self, image, path=None):
         if image is not None:
             self.original_image = image
             
@@ -138,6 +138,7 @@ class Controller:
             self.lens.k1 = 0.0
             self.lens.k2 = 0.0
             self.view.reset_to_default()
+            self.view.set_image_path(path)
             
             # メッシュもデフォルトサイズでリセット
             rows, cols = self.view.get_grid_dimensions()
