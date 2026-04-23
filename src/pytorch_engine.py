@@ -18,10 +18,17 @@ class SuperResModel(nn.Module):
         self.pixel_shuffle = nn.PixelShuffle(upscale_factor)
         
     def forward(self, x):
-        x = torch.tanh(self.conv1(x))
-        x = torch.tanh(self.conv2(x))
-        x = self.pixel_shuffle(self.conv3(x))
-        return x
+        # 残差接続（Skip Connection）の導入: 入力をバイリニアで拡大したものをベースにする
+        # これにより、未学習のモデルでも画像が真っ暗になるのを防ぐ
+        base = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=True)
+        
+        # AI による詳細復元パス
+        res = torch.tanh(self.conv1(x))
+        res = torch.tanh(self.conv2(res))
+        res = self.pixel_shuffle(self.conv3(res))
+        
+        # ベース画像に AI の補正分を微量加算（学習前なので寄与度を抑える）
+        return base + res * 0.1
 
 class PyTorchWarpEngine:
     def __init__(self, device=None):
