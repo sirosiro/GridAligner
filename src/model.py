@@ -11,13 +11,19 @@ class Point:
 class LensModel:
     k1: float = 0.0
     k2: float = 0.0
+    k3: float = 0.0
 
     def to_dict(self):
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data):
-        return cls(**data)
+        # 過去の保存データ（k3なし）との互換性を維持
+        return cls(
+            k1=data.get("k1", 0.0),
+            k2=data.get("k2", 0.0),
+            k3=data.get("k3", 0.0)
+        )
 
 @dataclass
 class MeshModel:

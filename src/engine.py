@@ -5,7 +5,7 @@ from model import MeshModel, LensModel, Point
 class WarpEngine:
     @staticmethod
     def get_lens_maps(width, height, lens: LensModel):
-        distCoeffs = np.array([lens.k1, lens.k2, 0, 0], dtype=np.float32)
+        distCoeffs = np.array([lens.k1, lens.k2, 0, 0, lens.k3], dtype=np.float32)
         f = max(width, height)
         K = np.array([[f, 0, width/2], [0, f, height/2], [0, 0, 1]], dtype=np.float32)
         new_K, _ = cv2.getOptimalNewCameraMatrix(K, distCoeffs, (width, height), 0)

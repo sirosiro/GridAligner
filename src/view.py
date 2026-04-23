@@ -367,29 +367,45 @@ class MainWindow(QMainWindow):
         self.btn_auto_lens.setStyleSheet("background-color: #009688; color: white; font-weight: bold;")
         controls_layout.addWidget(self.btn_auto_lens)
 
+        # 高解像度化 (1/10000 単位)
+        self.LENS_DIVISOR = 10000.0
+
         k1_layout = QHBoxLayout()
         k1_layout.addWidget(QLabel("k1 (Barrel/Pincushion)"))
-        self.label_k1 = QLabel("0.00")
+        self.label_k1 = QLabel("0.0000")
         self.label_k1.setAlignment(Qt.AlignRight)
         k1_layout.addWidget(self.label_k1)
         controls_layout.addLayout(k1_layout)
 
         self.slider_k1 = QSlider(Qt.Horizontal)
-        self.slider_k1.setRange(-200, 200); self.slider_k1.setValue(0)
+        self.slider_k1.setRange(-10000, 10000); self.slider_k1.setValue(0)
         controls_layout.addWidget(self.slider_k1)
         self.slider_k1.valueChanged.connect(self._update_labels)
 
         k2_layout = QHBoxLayout()
         k2_layout.addWidget(QLabel("k2 (Higher Order)"))
-        self.label_k2 = QLabel("0.000")
+        self.label_k2 = QLabel("0.0000")
         self.label_k2.setAlignment(Qt.AlignRight)
         k2_layout.addWidget(self.label_k2)
         controls_layout.addLayout(k2_layout)
 
         self.slider_k2 = QSlider(Qt.Horizontal)
-        self.slider_k2.setRange(-200, 200); self.slider_k2.setValue(0)
+        self.slider_k2.setRange(-5000, 5000); self.slider_k2.setValue(0)
         controls_layout.addWidget(self.slider_k2)
         self.slider_k2.valueChanged.connect(self._update_labels)
+
+        # 【New】k3 用のスライダーとラベル
+        k3_layout = QHBoxLayout()
+        k3_layout.addWidget(QLabel("k3 (Wide Angle/Endo)"))
+        self.label_k3 = QLabel("0.0000")
+        self.label_k3.setAlignment(Qt.AlignRight)
+        k3_layout.addWidget(self.label_k3)
+        controls_layout.addLayout(k3_layout)
+
+        self.slider_k3 = QSlider(Qt.Horizontal)
+        self.slider_k3.setRange(-2000, 2000); self.slider_k3.setValue(0)
+        controls_layout.addWidget(self.slider_k3)
+        self.slider_k3.valueChanged.connect(self._update_labels)
 
         self.btn_reset_lens = QPushButton("Reset Lens Parameters")
         controls_layout.addWidget(self.btn_reset_lens)
@@ -441,12 +457,21 @@ class MainWindow(QMainWindow):
         self.spin_cols.blockSignals(False)
 
     def get_lens_params(self):
-        # Return scaled values
-        return self.slider_k1.value() / 100.0, self.slider_k2.value() / 500.0
+        # 高解像度値を返す (k1, k2, k3)
+        return (self.slider_k1.value() / self.LENS_DIVISOR, 
+                self.slider_k2.value() / self.LENS_DIVISOR,
+                self.slider_k3.value() / self.LENS_DIVISOR)
 
-    def set_lens_params(self, k1, k2):
-        self.slider_k1.setValue(int(k1 * 100))
-        self.slider_k2.setValue(int(k2 * 500))
+    def set_lens_params(self, k1, k2, k3):
+        self.slider_k1.blockSignals(True)
+        self.slider_k2.blockSignals(True)
+        self.slider_k3.blockSignals(True)
+        self.slider_k1.setValue(int(k1 * self.LENS_DIVISOR))
+        self.slider_k2.setValue(int(k2 * self.LENS_DIVISOR))
+        self.slider_k3.setValue(int(k3 * self.LENS_DIVISOR))
+        self.slider_k1.blockSignals(False)
+        self.slider_k2.blockSignals(False)
+        self.slider_k3.blockSignals(False)
         self._update_labels()
 
     def is_preview_enabled(self):
@@ -474,13 +499,15 @@ class MainWindow(QMainWindow):
         self.lbl_progress.setText(text)
 
     def _update_labels(self):
-        k1, k2 = self.get_lens_params()
-        self.label_k1.setText(f"{k1:.2f}")
-        self.label_k2.setText(f"{k2:.3f}")
+        k1, k2, k3 = self.get_lens_params()
+        self.label_k1.setText(f"{k1:.4f}")
+        self.label_k2.setText(f"{k2:.4f}")
+        self.label_k3.setText(f"{k3:.4f}")
 
     def reset_lens_sliders(self):
         self.slider_k1.setValue(0)
         self.slider_k2.setValue(0)
+        self.slider_k3.setValue(0)
         self._update_labels()
 
     def reset_to_default(self):

@@ -38,7 +38,7 @@ class PyTorchWarpEngine:
         yy, xx = torch.meshgrid(torch.linspace(-0.5 * (h/w), 0.5 * (h/w), h, device=self.device), 
                                 torch.linspace(-0.5, 0.5, w, device=self.device), indexing='ij')
         r2 = xx**2 + yy**2
-        dist = 1 + lens.k1 * r2 + lens.k2 * (r2**2)
+        dist = 1 + lens.k1 * r2 + lens.k2 * (r2**2) + lens.k3 * (r2**3)
         return torch.stack((xx * 2 * dist, yy * 2 * dist * (w/h)), dim=-1).unsqueeze(0)
 
     def reproject_mesh(self, mesh: MeshModel, old_lens: LensModel, new_lens: LensModel, aspect_ratio: float):
@@ -60,7 +60,7 @@ class PyTorchWarpEngine:
                 # 2. 旧レンズパラメータで「物理的な歪み位置 (ux, uy)」を計算
                 # これは補正「前」の画像での座標に相当
                 r2 = xx**2 + yy**2
-                dist_old = 1 + old_lens.k1 * r2 + old_lens.k2 * (r2**2)
+                dist_old = 1 + old_lens.k1 * r2 + old_lens.k2 * (r2**2) + old_lens.k3 * (r2**3)
                 ux, uy = xx * dist_old, yy * dist_old
                 
                 # 3. 新レンズパラメータにおいて (ux, uy) に対応する「新正規化座標 (xx', yy')」を逆算
@@ -69,7 +69,7 @@ class PyTorchWarpEngine:
                 nx_val, ny_val = ux, uy # 初期値
                 for _ in range(5):
                     nr2 = nx_val**2 + ny_val**2
-                    f_val = 1 + new_lens.k1 * nr2 + new_lens.k2 * (nr2**2)
+                    f_val = 1 + new_lens.k1 * nr2 + new_lens.k2 * (nr2**2) + new_lens.k3 * (nr2**3)
                     # 簡易的な更新（厳密なヤコビアンではなく逐次近似）
                     nx_val = ux / f_val
                     ny_val = uy / f_val
@@ -107,13 +107,13 @@ class PyTorchWarpEngine:
         x_lines = self._find_grid_lines(np.sum(edges, axis=0), w, expected=None)
         return len(y_lines), len(x_lines)
 
-    def _compute_linearity_loss(self, segments, k1, k2):
+    def _compute_linearity_loss(self, segments, k1, k2, k3):
         total_loss = 0.0
         total_tr = 0.0
         for pts in segments:
             xx, yy = pts[:, 0], pts[:, 1]
             r2 = xx**2 + yy**2
-            dist = 1 + k1 * r2 + k2 * (r2**2)
+            dist = 1 + k1 * r2 + k2 * (r2**2) + k3 * (r2**3)
             ux, uy = xx * dist, yy * dist
             
             points = torch.stack([ux, uy], dim=1)
@@ -169,30 +169,31 @@ class PyTorchWarpEngine:
                     segments.append(torch.tensor(pts, device=self.device, dtype=torch.float32))
         
         if not segments:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0
 
         with torch.no_grad():
-            initial_linearity, initial_tr = self._compute_linearity_loss(segments, torch.tensor(0.0), torch.tensor(0.0))
-            loss_neg, _ = self._compute_linearity_loss(segments, torch.tensor(-0.1), torch.tensor(0.0))
-            loss_pos, _ = self._compute_linearity_loss(segments, torch.tensor(0.1), torch.tensor(0.0))
+            initial_linearity, initial_tr = self._compute_linearity_loss(segments, torch.tensor(0.0), torch.tensor(0.0), torch.tensor(0.0))
+            loss_neg, _ = self._compute_linearity_loss(segments, torch.tensor(-0.1), torch.tensor(0.0), torch.tensor(0.0))
+            loss_pos, _ = self._compute_linearity_loss(segments, torch.tensor(0.1), torch.tensor(0.0), torch.tensor(0.0))
             start_k1 = -0.05 if loss_neg < loss_pos else 0.05
 
         k1 = torch.tensor(start_k1, device=self.device, requires_grad=True)
         k2 = torch.tensor(0.0, device=self.device, requires_grad=True)
+        k3 = torch.tensor(0.0, device=self.device, requires_grad=True)
         # 慎重な学習率 (0.01)
-        optimizer = torch.optim.Adam([k1, k2], lr=0.01)
+        optimizer = torch.optim.Adam([k1, k2, k3], lr=0.01)
         
         max_iters = 250
         for i in range(max_iters):
             optimizer.zero_grad()
-            linearity, current_tr = self._compute_linearity_loss(segments, k1, k2)
+            linearity, current_tr = self._compute_linearity_loss(segments, k1, k2, k3)
             
             # 【究極のブレーキ設定】
             # 面積保存ペナルティを 5000.0 に増強。極端な拡大・縮小を「絶対悪」とする。
             total_loss = linearity * 2000.0 + torch.abs(current_tr / initial_tr - 1.0) * 5000.0
             
-            # k1, k2 への正則化も強化
-            total_loss += k1**2 * 0.1 + k2**2 * 20.0
+            # k1, k2, k3 への正則化も強化
+            total_loss += k1**2 * 0.1 + k2**2 * 20.0 + k3**2 * 50.0
             
             total_loss.backward()
             optimizer.step()
@@ -201,6 +202,7 @@ class PyTorchWarpEngine:
                 # 安全な範囲 (-0.8〜0.8) に制限
                 k1.clamp_(-0.8, 0.8)
                 k2.clamp_(-0.3, 0.3)
+                k3.clamp_(-0.1, 0.1)
             
             if progress_callback and i % 5 == 0:
                 progress_callback(i + 1, max_iters, float(total_loss.detach().cpu()))
@@ -208,7 +210,7 @@ class PyTorchWarpEngine:
         if progress_callback:
             progress_callback(max_iters, max_iters, float(total_loss.detach().cpu()))
                 
-        return float(k1.detach().cpu().numpy()), float(k2.detach().cpu().numpy())
+        return float(k1.detach().cpu().numpy()), float(k2.detach().cpu().numpy()), float(k3.detach().cpu().numpy())
 
     def detect_initial_grid(self, image_np, target_rows=None, target_cols=None):
         h, w = image_np.shape[:2]
@@ -271,7 +273,7 @@ class PyTorchWarpEngine:
         mesh_grid = F.interpolate(sparse_g.permute(0, 3, 1, 2), size=(dst_h, dst_w), mode='bilinear', align_corners=True).permute(0, 2, 3, 1)
         yy, xx = torch.meshgrid(torch.linspace(-0.5 * (src_h/src_w), 0.5 * (src_h/src_w), src_h, device=self.device), torch.linspace(-0.5, 0.5, src_w, device=self.device), indexing='ij')
         r2 = xx**2 + yy**2
-        dist = 1 + lens.k1 * r2 + lens.k2 * (r2**2)
+        dist = 1 + lens.k1 * r2 + lens.k2 * (r2**2) + lens.k3 * (r2**3)
         lens_grid = torch.stack((xx * 2 * dist, yy * 2 * dist * (src_w/src_h)), dim=-1).unsqueeze(0)
         full_grid = F.grid_sample(lens_grid.permute(0, 3, 1, 2), mesh_grid, mode='bilinear', padding_mode='reflection', align_corners=True).permute(0, 2, 3, 1)
         rect_t = F.grid_sample(img_t, full_grid, mode='bilinear', padding_mode='reflection', align_corners=True)

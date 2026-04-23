@@ -15,7 +15,7 @@ class LensWorker(QThread):
     """
     レンズ歪み推定をバックグラウンドで実行し、進捗を報告するワーカークラス。
     """
-    finished = Signal(float, float)
+    finished = Signal(float, float, float)
     progress = Signal(int, str)
     
     def __init__(self, engine, image):
@@ -30,11 +30,11 @@ class LensWorker(QThread):
             self.progress.emit(pct, f"Optimizing Lens... Step {curr}/{total} (Loss: {loss:.6f})")
             
         try:
-            k1, k2 = self.engine.estimate_lens_parameters(self.image, progress_callback=cb)
-            self.finished.emit(k1, k2)
+            k1, k2, k3 = self.engine.estimate_lens_parameters(self.image, progress_callback=cb)
+            self.finished.emit(k1, k2, k3)
         except Exception as e:
-            # 簡略化のためエラー時も0,0を返すが、本来はエラー報告が望ましい
-            self.finished.emit(0.0, 0.0)
+            # 簡略化のためエラー時も0,0,0を返すが、本来はエラー報告が望ましい
+            self.finished.emit(0.0, 0.0, 0.0)
 
 class Controller:
     def __init__(self, view, model_mesh, model_lens):
@@ -56,6 +56,7 @@ class Controller:
         self.view.btn_reset.clicked.connect(self.reset_mesh)
         self.view.slider_k1.valueChanged.connect(self.update_lens)
         self.view.slider_k2.valueChanged.connect(self.update_lens)
+        self.view.slider_k3.valueChanged.connect(self.update_lens)
         self.view.spin_rows.valueChanged.connect(self.resize_mesh)
         self.view.spin_cols.valueChanged.connect(self.resize_mesh)
         self.view.canvas.pointMoved.connect(self.on_point_moved)
@@ -151,15 +152,15 @@ class Controller:
         self.lens_worker.finished.connect(self.on_auto_lens_finished)
         self.lens_worker.start()
 
-    def on_auto_lens_finished(self, k1, k2):
+    def on_auto_lens_finished(self, k1, k2, k3):
         """
         自動補正完了時の処理。
         """
         # 物理座標同期を伴う更新
-        self._update_lens_params_with_sync(k1, k2)
+        self._update_lens_params_with_sync(k1, k2, k3)
         
         # UIへの反映
-        self.view.set_lens_params(k1, k2)
+        self.view.set_lens_params(k1, k2, k3)
         
         # UIの復元
         self.view.set_progress_visible(False)
@@ -167,7 +168,7 @@ class Controller:
         
         self.update_preview()
         QMessageBox.information(self.view, "AI Features", 
-            f"Auto Lens Correction Finished.\nEstimated: k1={k1:.4f}, k2={k2:.4f}")
+            f"Auto Lens Correction Finished.\nEstimated: k1={k1:.4f}, k2={k2:.4f}, k3={k3:.4f}")
 
     def resize_mesh(self):
         rows, cols = self.view.get_grid_dimensions()
@@ -222,6 +223,7 @@ class Controller:
             # クリーンロード原則に基づき、パラメータをリセット
             self.lens.k1 = 0.0
             self.lens.k2 = 0.0
+            self.lens.k3 = 0.0
             self.view.reset_to_default()
             self.view.set_image_path(path)
             
@@ -282,18 +284,18 @@ class Controller:
         self.update_preview()
 
     def update_lens(self):
-        k1, k2 = self.view.get_lens_params()
-        self._update_lens_params_with_sync(k1, k2)
+        k1, k2, k3 = self.view.get_lens_params()
+        self._update_lens_params_with_sync(k1, k2, k3)
         self.update_preview()
 
-    def _update_lens_params_with_sync(self, new_k1, new_k2):
+    def _update_lens_params_with_sync(self, new_k1, new_k2, new_k3):
         """
         レンズパラメータを更新し、同時にメッシュ制御点の物理位置を同期させます。
         """
         if self.original_image is not None:
             h, w = self.original_image.shape[:2]
             aspect = w / h
-            new_lens = LensModel(k1=new_k1, k2=new_k2)
+            new_lens = LensModel(k1=new_k1, k2=new_k2, k3=new_k3)
             
             # 再投影を実行してメッシュ点を移動
             self.py_engine.reproject_mesh(self.mesh, self.lens, new_lens, aspect)
@@ -301,6 +303,7 @@ class Controller:
             # パラメータを確定
             self.lens.k1 = new_k1
             self.lens.k2 = new_k2
+            self.lens.k3 = new_k3
 
     def toggle_preview_window(self, state):
         if state == 2: # Checked
@@ -369,7 +372,7 @@ class Controller:
             
             # Sync UI
             self.view.set_grid_dimensions(self.mesh.rows, self.mesh.cols)
-            self.view.set_lens_params(self.lens.k1, self.lens.k2)
+            self.view.set_lens_params(self.lens.k1, self.lens.k2, self.lens.k3)
             
             self.view.canvas.set_mesh(self.mesh)
             self.update_preview()

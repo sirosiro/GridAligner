@@ -36,6 +36,7 @@ classDiagram
         class LensModel {
             +float k1
             +float k2
+            +float k3
             +to_dict()
             +from_dict(data)
         }
@@ -117,7 +118,7 @@ classDiagram
             +get_grid_dimensions()
             +set_grid_dimensions(r, c)
             +get_lens_params()
-            +set_lens_params(k1, k2)
+            +set_lens_params(k1, k2, k3)
             +is_preview_enabled()
             +is_super_res_enabled()
             +is_smooth_warp_enabled()
@@ -146,6 +147,7 @@ classDiagram
             +update_lens()
             +update_preview()
             +on_auto_lens_correction()
+            +on_auto_lens_finished(k1, k2, k3)
             +resize_mesh()
             +reset_mesh()
             +straighten_grid()
@@ -178,7 +180,7 @@ classDiagram
 
 ##### Model レイヤー (`model.py`)
 - **Point**: 2次元座標（x, y）を保持する minimum 単位のデータクラス。画像サイズに依存しない正規化された中心座標（0.0 - 1.0）として扱う。
-- **LensModel**: レンズ歪み補正係数（k1, k2）を保持。プロジェクト保存用のシリアライズ（to_dict/from_dict）を備える。
+- **LensModel**: レンズ歪み補正係数（k1, k2, k3）を保持。k3 は内視鏡等の高次放射歪みに対応。プロジェクト保存用のシリアライズ（to_dict/from_dict）を備える。
 - **MeshModel**: 格子状メッシュの行数・列数、および全制御点のPointリストを保持。`rotate_clockwise` による座標系の整合性補正を担当。
 
 ##### Engine レイヤー (`engine.py`, `pytorch_engine.py`)
@@ -186,17 +188,17 @@ classDiagram
 - **PyTorchWarpEngine**: GPU/並列演算を活用した高度なエンジン。AI格子検出（V2）、物理演算ベースのメッシュ最適化（Smooth Warp）を統括。
 - **reproject_mesh(mesh, old_lens, new_lens, aspect_ratio)**: 
     - **機能**: レンズ補正状態の変化に合わせて、メッシュの各点を物理的な位置が維持されるように再計算する。
-    - **アルゴリズム**: 各点を一度「歪み空間（Original Space）」に逆投影し、そこから新しいレンズパラメータに基づいて「新補正空間」へ再投影する。
+    - **アルゴリズム**: 各点を一度「歪み空間（Original Space）」に逆投影し、そこから新しいレンズパラメータ（k1, k2, k3）に基づいて「新補正空間」へ再投影する。
 - **estimate_grid_dimensions(image_np)**: 画像のエッジ投影プロファイルを解析し、格子点数（rows, cols）を自律的に推定する。
 - **estimate_lens_parameters(image_np, progress_callback)**: 
-    - **保守的最適化ポリシー**: 画像内の支配的なエッジ（外郭等）をサンプリングし、物理的な面積保存制約を最優先しつつ、直線性が最大化される $k1, k2$ を探索する。
+    - **保守的最適化ポリシー**: 画像内の支配的なエッジ（外郭等）をサンプリングし、物理的な面積保存制約を最優先しつつ、直線性が最大化される $k1, k2, k3$ を探索する。
     - **安全装置**: 推定値の暴走（オーバーシュート）を防ぐため、勾配降下法の学習率を抑制し、強い形状維持ペナルティを課すことで、手動調整に近い堅実な結果を保証する。
 - **SuperResModel**: PyTorchで実装されたCNNベースの超解像モデル。補正によって失われがちな鮮明度をニューラルネットワークで復元。
 
 ##### Controller レイヤー (`controller.py`)
 - **Controller**: アプリのライフサイクルとイベントフローを管理。View（入力） -> Model（更新） -> Engine（演算） -> View（表示）の一連の同期を制御し、データの一貫性を保証する。
-- **update_lens**: レンズスライダーの変更を検知した際、`reproject_mesh` を呼び出してメッシュの物理位置を同期させた後、プレビューを更新する。
-- **on_auto_lens_correction**: PyTorch Engine を非同期スレッドで呼び出し、画像内の直線性エネルギーを最小化する $k1, k2$ を探索する。
+- **update_lens**: レンズスライダーの変更を検知した際、`reproject_mesh` を呼び出してメッシュの物理位置を同期させた後、プレビューを更新する（k1, k2, k3 対応）。
+- **on_auto_lens_correction**: PyTorch Engine を非同期スレッドで呼び出し、画像内の直線性エネルギーを最小化する $k1, k2, k3$ を探索する。
 - **extract_grid_from_filename(path)**: ファイル名に含まれる `8x10` 等のパターンを正規表現で抽出し、初期設定のヒントとして利用する。
 
 ##### View レイヤー (`view.py`)
