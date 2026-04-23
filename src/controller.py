@@ -155,8 +155,8 @@ class Controller:
         """
         自動補正完了時の処理。
         """
-        self.lens.k1 = k1
-        self.lens.k2 = k2
+        # 物理座標同期を伴う更新
+        self._update_lens_params_with_sync(k1, k2)
         
         # UIへの反映
         self.view.set_lens_params(k1, k2)
@@ -283,9 +283,24 @@ class Controller:
 
     def update_lens(self):
         k1, k2 = self.view.get_lens_params()
-        self.lens.k1 = k1
-        self.lens.k2 = k2
+        self._update_lens_params_with_sync(k1, k2)
         self.update_preview()
+
+    def _update_lens_params_with_sync(self, new_k1, new_k2):
+        """
+        レンズパラメータを更新し、同時にメッシュ制御点の物理位置を同期させます。
+        """
+        if self.original_image is not None:
+            h, w = self.original_image.shape[:2]
+            aspect = w / h
+            new_lens = LensModel(k1=new_k1, k2=new_k2)
+            
+            # 再投影を実行してメッシュ点を移動
+            self.py_engine.reproject_mesh(self.mesh, self.lens, new_lens, aspect)
+            
+            # パラメータを確定
+            self.lens.k1 = new_k1
+            self.lens.k2 = new_k2
 
     def toggle_preview_window(self, state):
         if state == 2: # Checked

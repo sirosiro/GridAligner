@@ -41,6 +41,43 @@ class PyTorchWarpEngine:
         dist = 1 + lens.k1 * r2 + lens.k2 * (r2**2)
         return torch.stack((xx * 2 * dist, yy * 2 * dist * (w/h)), dim=-1).unsqueeze(0)
 
+    def reproject_mesh(self, mesh: MeshModel, old_lens: LensModel, new_lens: LensModel, aspect_ratio: float):
+        """
+        レンズパラメータの変更に合わせて、メッシュ制御点の座標を再投影し、
+        画像内の物理的な位置（ピクセル）を維持します。
+        aspect_ratio = width / height
+        """
+        rows, cols = mesh.rows, mesh.cols
+        pts = []
+        for r in range(rows):
+            for c in range(cols):
+                p = mesh.points[r][c]
+                # 1. 現在の正規化座標 -> 中心相対座標 (xx, yy)
+                # Canvas 描画ロジックと合わせる: w基準
+                xx = p.x - 0.5
+                yy = (p.y - 0.5) / aspect_ratio
+                
+                # 2. 旧レンズパラメータで「物理的な歪み位置 (ux, uy)」を計算
+                # これは補正「前」の画像での座標に相当
+                r2 = xx**2 + yy**2
+                dist_old = 1 + old_lens.k1 * r2 + old_lens.k2 * (r2**2)
+                ux, uy = xx * dist_old, yy * dist_old
+                
+                # 3. 新レンズパラメータにおいて (ux, uy) に対応する「新正規化座標 (xx', yy')」を逆算
+                # 方程式: x' * (1 + k1_new * r'2 + k2_new * r'4) = ux
+                # ニュートン法で近似解を求める
+                nx_val, ny_val = ux, uy # 初期値
+                for _ in range(5):
+                    nr2 = nx_val**2 + ny_val**2
+                    f_val = 1 + new_lens.k1 * nr2 + new_lens.k2 * (nr2**2)
+                    # 簡易的な更新（厳密なヤコビアンではなく逐次近似）
+                    nx_val = ux / f_val
+                    ny_val = uy / f_val
+                
+                # 4. 新正規化座標 -> 0.0-1.0 空間
+                p.x = float(np.clip(nx_val + 0.5, 0.0, 1.0))
+                p.y = float(np.clip(ny_val * aspect_ratio + 0.5, 0.0, 1.0))
+
     def _find_grid_lines(self, hist, size, expected=None):
         sigma = 21 if expected and expected > 10 else 51
         blurred = cv2.GaussianBlur(hist.astype(np.float32), (sigma, 1), 0).flatten()
@@ -130,7 +167,7 @@ class PyTorchWarpEngine:
                     indices = np.linspace(0, len(sub_cnt)-1, 40).astype(int)
                     pts = [[sub_cnt[idx][0][0]/sw - 0.5, sub_cnt[idx][0][1]/sw - 0.5*(sh/sw)] for idx in indices]
                     segments.append(torch.tensor(pts, device=self.device, dtype=torch.float32))
-
+        
         if not segments:
             return 0.0, 0.0
 
