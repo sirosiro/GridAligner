@@ -8,6 +8,7 @@ import numpy as np
 
 class Canvas(QWidget):
     pointMoved = Signal(int, int, float, float) # (row, col, new_x, new_y)
+    crosshairMoved = Signal(float, float) # (nx, ny)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -101,20 +102,25 @@ class Canvas(QWidget):
         offset_y = (self.height() - scaled_pixmap.height()) // 2
         w, h = scaled_pixmap.width(), scaled_pixmap.height()
 
-        for r in range(self.mesh.rows):
-            for c in range(self.mesh.cols):
-                p = self.mesh.points[r][c]
-                screen_x = offset_x + p.x * w
-                screen_y = offset_y + p.y * h
-                if (event.position() - QPointF(screen_x, screen_y)).manhattanLength() < 10:
-                    self.selected_point = (r, c)
-                    return
+        if not self.show_grid:
+            # グリッド非表示時は交点調整を無効化し、十字ガイドの移動のみ許可
+            pass
+        else:
+            for r in range(self.mesh.rows):
+                for c in range(self.mesh.cols):
+                    p = self.mesh.points[r][c]
+                    screen_x = offset_x + p.x * w
+                    screen_y = offset_y + p.y * h
+                    if (event.position() - QPointF(screen_x, screen_y)).manhattanLength() < 10:
+                        self.selected_point = (r, c)
+                        return
         
         # 制御点以外をクリックした場合は、十字ガイドラインの位置を更新
         self.crosshair_pos = QPointF(
             (event.position().x() - offset_x) / w,
             (event.position().y() - offset_y) / h
         )
+        self.crosshairMoved.emit(self.crosshair_pos.x(), self.crosshair_pos.y())
         self.update()
 
     def mouseMoveEvent(self, event):
@@ -225,38 +231,165 @@ class CameraDialog(QDialog):
         self.stop_camera()
         super().closeEvent(event)
 
+class PreviewCanvas(QWidget):
+    crosshairMoved = Signal(float, float) # (nx, ny)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.pixmap = None
+        self.show_crosshair = False
+        self.crosshair_pos = QPointF(0.5, 0.5)
+        self.guide_scale = 0.05 # デフォルト 5%
+        self.setMinimumSize(1, 1)
+        self.setMouseTracking(True)
+
+    def set_pixmap(self, pixmap):
+        self.pixmap = pixmap
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(34, 34, 34))
+        
+        if not self.pixmap:
+            painter.setPen(QColor(136, 136, 136))
+            painter.drawText(self.rect(), Qt.AlignCenter, "No image loaded")
+            return
+
+        scaled_pixmap = self.pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        ox = (self.width() - scaled_pixmap.width()) // 2
+        oy = (self.height() - scaled_pixmap.height()) // 2
+        painter.drawPixmap(ox, oy, scaled_pixmap)
+
+        if self.show_crosshair:
+            w, h = scaled_pixmap.width(), scaled_pixmap.height()
+            cx = ox + self.crosshair_pos.x() * w
+            cy = oy + self.crosshair_pos.y() * h
+
+            # --- 視認性向上のための描画モード変更 (XOR的効果) ---
+            painter.setCompositionMode(QPainter.CompositionMode_Difference)
+            
+            # ガイドライン
+            guide_pen = QPen(QColor(255, 255, 255), 1)
+            painter.setPen(guide_pen)
+            painter.drawLine(ox, cy, ox + w, cy)
+            painter.drawLine(cx, oy, cx, oy + h)
+
+            # スケール目盛り (正方形性を保つため min(w, h) を基準にする)
+            scale_pen = QPen(QColor(255, 255, 255), 2)
+            painter.setPen(scale_pen)
+            tick_size = 5
+            pixel_interval = min(w, h) * self.guide_scale
+            
+            # 水平方向の目盛り
+            num_ticks_h = int(w / pixel_interval) + 1
+            for i in range(-num_ticks_h, num_ticks_h + 1):
+                tx = cx + i * pixel_interval
+                if ox <= tx <= ox + w:
+                    painter.drawLine(tx, cy - tick_size, tx, cy + tick_size)
+            
+            # 垂直方向の目盛り
+            num_ticks_v = int(h / pixel_interval) + 1
+            for i in range(-num_ticks_v, num_ticks_v + 1):
+                ty = cy + i * pixel_interval
+                if oy <= ty <= oy + h:
+                    painter.drawLine(cx - tick_size, ty, cx + tick_size, ty)
+            
+            # 中央のガイドボックス (1.0% - 20.0% Scale)
+            rect_size = min(w, h) * self.guide_scale
+            painter.setPen(QPen(QColor(255, 255, 255), 1, Qt.DashLine))
+            painter.drawRect(cx - rect_size/2, cy - rect_size/2, rect_size, rect_size)
+            
+            # 描画モードを元に戻す
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+
+    def _handle_mouse(self, event):
+        if not self.pixmap: return
+        scaled_pixmap = self.pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        ox = (self.width() - scaled_pixmap.width()) // 2
+        oy = (self.height() - scaled_pixmap.height()) // 2
+        w, h = scaled_pixmap.width(), scaled_pixmap.height()
+        
+        nx = (event.position().x() - ox) / w
+        ny = (event.position().y() - oy) / h
+        self.crosshair_pos = QPointF(max(0.0, min(1.0, nx)), max(0.0, min(1.0, ny)))
+        self.crosshairMoved.emit(self.crosshair_pos.x(), self.crosshair_pos.y())
+        self.update()
+
+    def mousePressEvent(self, event):
+        self._handle_mouse(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            self._handle_mouse(event)
+
 class PreviewWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Rectified Preview")
         
-        self.label = QLabel("No image loaded")
-        self.label.setAlignment(Qt.AlignCenter)
-        self.label.setStyleSheet("background-color: #222; color: #888;")
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.canvas = PreviewCanvas()
+        layout.addWidget(self.canvas, 1) # 1 = Stretch factor (占有優先)
+
+        # スライダーとラベルのバー (高さを最小限に制限)
+        self.control_bar = QWidget()
+        self.control_bar.setFixedHeight(30)
+        self.control_bar.setStyleSheet("background-color: #222222; border-top: 1px solid #444444; color: #CCCCCC;")
+        bar_layout = QHBoxLayout(self.control_bar)
+        bar_layout.setContentsMargins(10, 0, 10, 0)
+        bar_layout.setSpacing(10)
+
+        lbl = QLabel("Guide Scale:")
+        lbl.setStyleSheet("font-size: 10px;")
+        bar_layout.addWidget(lbl)
         
-        # 縮小リサイズを可能にするための設定
-        # QLabelはデフォルトでpixmapサイズに固執するため、最小サイズを解除する
-        self.label.setMinimumSize(1, 1)
-        self.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-        
-        self.setCentralWidget(self.label)
-        self.resize(600, 450)
-        self.current_pixmap = None
+        self.label_guide_scale = QLabel("5.00%")
+        self.label_guide_scale.setMinimumWidth(50)
+        self.label_guide_scale.setStyleSheet("font-size: 10px; font-family: monospace;")
+        bar_layout.addWidget(self.label_guide_scale)
+
+        self.slider_guide_scale = QSlider(Qt.Horizontal)
+        self.slider_guide_scale.setRange(100, 2000)
+        self.slider_guide_scale.setValue(500)
+        self.slider_guide_scale.setFixedHeight(20)
+        self.slider_guide_scale.valueChanged.connect(self._on_scale_changed)
+        bar_layout.addWidget(self.slider_guide_scale)
+
+        layout.addWidget(self.control_bar)
+        self.resize(600, 500)
+
+    def _on_scale_changed(self, val):
+        scale = val / 100.0
+        self.label_guide_scale.setText(f"{scale:.2f}%")
+        self.canvas.guide_scale = scale / 100.0 # 0.01 - 0.20
+        self.canvas.update()
 
     def set_image(self, qimage):
         if qimage.isNull(): return
-        self.current_pixmap = QPixmap.fromImage(qimage)
-        self.update_display()
+        self.canvas.set_pixmap(QPixmap.fromImage(qimage))
 
-    def update_display(self):
-        if self.current_pixmap:
-            # ラベルの現在の（レイアウトによって決定された）サイズに合わせてスケーリング
-            self.label.setPixmap(self.current_pixmap.scaled(
-                self.label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    def set_crosshair_visible(self, visible):
+        self.canvas.show_crosshair = visible
+        self.canvas.update()
 
-    def resizeEvent(self, event):
-        self.update_display()
-        super().resizeEvent(event)
+    def set_crosshair_pos(self, pos):
+        self.canvas.crosshair_pos = pos
+        self.canvas.update()
+
+    def set_guide_scale(self, scale):
+        # 外部からの設定（0.01 - 0.20 形式）
+        self.slider_guide_scale.blockSignals(True)
+        self.slider_guide_scale.setValue(int(scale * 10000))
+        self.label_guide_scale.setText(f"{scale*100:.2f}%")
+        self.slider_guide_scale.blockSignals(False)
+        self.canvas.guide_scale = scale
+        self.canvas.update()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -353,6 +486,10 @@ class MainWindow(QMainWindow):
         self.btn_expand.setToolTip("Expand the current perspective plane to cover the whole image.")
         self.btn_expand.setStyleSheet("background-color: #FF9800; color: white;")
         controls_layout.addWidget(self.btn_expand)
+
+        self.btn_subdivide = QPushButton("✖️2 Subdivide Grid (Density x2)")
+        self.btn_subdivide.setStyleSheet("background-color: #2c3e50; color: white; font-weight: bold;")
+        controls_layout.addWidget(self.btn_subdivide)
 
         self.btn_rotate = QPushButton("↻ Rotate Grid (90° CW)")
         self.btn_rotate.setToolTip("Rotate the grid orientation by 90 degrees clockwise.")

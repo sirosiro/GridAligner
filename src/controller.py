@@ -3,9 +3,9 @@ import numpy as np
 import json
 import os
 import re
-from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QFileDialog, QMessageBox
-from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QApplication
+from PySide6.QtCore import QThread, Signal, Qt, QPointF
 from model import MeshModel, LensModel, Point
 from engine import WarpEngine
 from pytorch_engine import PyTorchWarpEngine
@@ -74,19 +74,40 @@ class Controller:
         self.view.btn_export.clicked.connect(self.export)
         self.view.btn_straighten.clicked.connect(self.straighten_grid)
         self.view.btn_expand.clicked.connect(self.expand_mesh_to_full_frame)
+        self.view.btn_subdivide.clicked.connect(self.subdivide_grid)
         self.view.btn_rotate.clicked.connect(self.rotate_grid)
         self.view.check_show_grid.toggled.connect(self.view.set_grid_visible)
+        
+        # 十字ガイドの同期
         self.view.check_show_crosshair.toggled.connect(self.view.set_crosshair_visible)
+        self.view.check_show_crosshair.toggled.connect(lambda _: self.update_preview())
+        self.view.canvas.crosshairMoved.connect(self.sync_crosshair)
 
     def on_point_moved(self, r, c, nx, ny):
-        # Update Model
-        self.mesh.points[r][c].x = nx
-        self.mesh.points[r][c].y = ny
-
-        # Perspective Sync if corner is moved
-        is_corner = (r == 0 or r == self.mesh.rows - 1) and (c == 0 or c == self.mesh.cols - 1)
+        # 四隅のいずれかが動かされた場合、メッシュ全体をホモグラフィ変形させる（非破壊的調整）
+        is_corner = (r == 0 and c == 0) or (r == 0 and c == self.mesh.cols - 1) or \
+                    (r == self.mesh.rows - 1 and c == self.mesh.cols - 1) or \
+                    (r == self.mesh.rows - 1 and c == 0)
+        
         if is_corner:
-            WarpEngine.sync_perspective(self.mesh)
+            # 現在の四隅を取得し、動かされた点だけを新しい座標に差し替える
+            dst_corners = [
+                Point(self.mesh.points[0][0].x, self.mesh.points[0][0].y),
+                Point(self.mesh.points[0][self.mesh.cols-1].x, self.mesh.points[0][self.mesh.cols-1].y),
+                Point(self.mesh.points[self.mesh.rows-1][self.mesh.cols-1].x, self.mesh.points[self.mesh.rows-1][self.mesh.cols-1].y),
+                Point(self.mesh.points[self.mesh.rows-1][0].x, self.mesh.points[self.mesh.rows-1][0].y)
+            ]
+            corner_idx = 0
+            if r == 0 and c == self.mesh.cols - 1: corner_idx = 1
+            elif r == self.mesh.rows - 1 and c == self.mesh.cols - 1: corner_idx = 2
+            elif r == self.mesh.rows - 1 and c == 0: corner_idx = 3
+            
+            dst_corners[corner_idx] = Point(nx, ny)
+            self.mesh.transform_by_corners(dst_corners, linearize=False)
+        else:
+            # 通常の点はその点だけを動かす
+            self.mesh.points[r][c].x = nx
+            self.mesh.points[r][c].y = ny
 
         # Smooth Warp logic
         if self.view.is_smooth_warp_enabled():
@@ -260,17 +281,25 @@ class Controller:
         self.update_preview()
 
     def straighten_grid(self):
-        WarpEngine.sync_perspective(self.mesh)
-        self.view.canvas.update()
+        # 再検出はせず、現在の四隅の位置を維持したまま、内部を直線格子にする
+        dst_corners = [
+            Point(self.mesh.points[0][0].x, self.mesh.points[0][0].y),
+            Point(self.mesh.points[0][self.mesh.cols-1].x, self.mesh.points[0][self.mesh.cols-1].y),
+            Point(self.mesh.points[self.mesh.rows-1][self.mesh.cols-1].x, self.mesh.points[self.mesh.rows-1][self.mesh.cols-1].y),
+            Point(self.mesh.points[self.mesh.rows-1][0].x, self.mesh.points[self.mesh.rows-1][0].y)
+        ]
+        self.mesh.transform_by_corners(dst_corners, linearize=True)
         self.update_preview()
+        self.view.canvas.update()
 
     def expand_mesh_to_full_frame(self):
         if self.original_image is not None:
             h, w = self.original_image.shape[:2]
+            # 元の安全な拡張ロジックに戻す
             WarpEngine.expand_mesh(self.mesh, w, h)
             self.view.set_grid_dimensions(self.mesh.rows, self.mesh.cols)
-            self.view.canvas.update()
             self.update_preview()
+            self.view.canvas.update()
 
     def rotate_grid(self):
         """
@@ -281,6 +310,13 @@ class Controller:
         # UI側の数値も入れ替え（これにより整合性を保つ）
         self.view.set_grid_dimensions(self.mesh.rows, self.mesh.cols)
         self.view.canvas.update()
+        self.update_preview()
+
+    def subdivide_grid(self):
+        """メッシュ解像度を倍増（細分化）します。"""
+        self.mesh.subdivide()
+        # UIの数値を更新
+        self.view.set_grid_dimensions(self.mesh.rows, self.mesh.cols)
         self.update_preview()
 
     def update_lens(self):
@@ -309,6 +345,8 @@ class Controller:
         if state == 2: # Checked
             if not self.preview_window:
                 self.preview_window = PreviewWindow(self.view)
+                # プレビュー側からの操作を同期
+                self.preview_window.canvas.crosshairMoved.connect(self.sync_crosshair)
             self.preview_window.show()
             self.update_preview()
         else:
@@ -343,6 +381,21 @@ class Controller:
             rh, rw, rch = rectified.shape
             rqimg = QImage(rectified, rw, rh, rch * rw, QImage.Format_RGB888)
             self.preview_window.set_image(rqimg)
+            
+            # 十字ガイドの同期 (画像更新時)
+            self.preview_window.set_crosshair_visible(self.view.check_show_crosshair.isChecked())
+            self.preview_window.set_crosshair_pos(self.view.canvas.crosshair_pos)
+
+    def sync_crosshair(self, nx, ny):
+        """メインキャンバスとプレビューキャンバスの十字ガイド位置を同期させます。"""
+        pos = QPointF(nx, ny)
+        # メイン側を更新
+        self.view.canvas.crosshair_pos = pos
+        self.view.canvas.update()
+        
+        # プレビュー側を更新
+        if self.preview_window and self.preview_window.isVisible():
+            self.preview_window.set_crosshair_pos(pos)
 
     def save_project(self):
         file_path, _ = QFileDialog.getSaveFileName(self.view, "Save Project", "", "JSON Files (*.json)")

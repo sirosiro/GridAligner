@@ -60,26 +60,25 @@ class PyTorchWarpEngine:
             for c in range(cols):
                 p = mesh.points[r][c]
                 # 1. 現在の正規化座標 -> 中心相対座標 (xx, yy)
-                # Canvas 描画ロジックと合わせる: w基準
+                # Engine (process_all) と 100% 一致する座標系
                 xx = p.x - 0.5
                 yy = (p.y - 0.5) / aspect_ratio
                 
-                # 2. 旧レンズパラメータで「物理的な歪み位置 (ux, uy)」を計算
-                # これは補正「前」の画像での座標に相当
-                r2 = xx**2 + yy**2
-                dist_old = 1 + old_lens.k1 * r2 + old_lens.k2 * (r2**2) + old_lens.k3 * (r2**3)
+                # 2. 旧レンズパラメータで「歪み画像内」の物理的な座標 (ux, uy) を計算
+                r2_old = xx**2 + yy**2
+                dist_old = 1 + old_lens.k1 * r2_old + old_lens.k2 * (r2_old**2) + old_lens.k3 * (r2_old**3)
                 ux, uy = xx * dist_old, yy * dist_old
                 
-                # 3. 新レンズパラメータにおいて (ux, uy) に対応する「新正規化座標 (xx', yy')」を逆算
-                # 方程式: x' * (1 + k1_new * r'2 + k2_new * r'4) = ux
+                # 3. 新レンズパラメータにおいて (ux, uy) に対応する「新正規化座標 (nx, ny)」を逆算
                 # ニュートン法で近似解を求める
-                nx_val, ny_val = ux, uy # 初期値
-                for _ in range(5):
-                    nr2 = nx_val**2 + ny_val**2
-                    f_val = 1 + new_lens.k1 * nr2 + new_lens.k2 * (nr2**2) + new_lens.k3 * (nr2**3)
-                    # 簡易的な更新（厳密なヤコビアンではなく逐次近似）
-                    nx_val = ux / f_val
-                    ny_val = uy / f_val
+                nx_val, ny_val = xx, yy # 初期値として現在の位置を使用
+                for _ in range(10): # 反復回数を増やして精度向上
+                    r2_new = nx_val**2 + ny_val**2
+                    dist_new = 1 + new_lens.k1 * r2_new + new_lens.k2 * (r2_new**2) + new_lens.k3 * (r2_new**3)
+                    
+                    # 誤差と更新 (簡易ニュートン)
+                    nx_val -= (nx_val * dist_new - ux) / dist_new
+                    ny_val -= (ny_val * dist_new - uy) / dist_new
                 
                 # 4. 新正規化座標 -> 0.0-1.0 空間
                 p.x = float(np.clip(nx_val + 0.5, 0.0, 1.0))
@@ -218,6 +217,38 @@ class PyTorchWarpEngine:
             progress_callback(max_iters, max_iters, float(total_loss.detach().cpu()))
                 
         return float(k1.detach().cpu().numpy()), float(k2.detach().cpu().numpy()), float(k3.detach().cpu().numpy())
+
+    def find_outer_corners(self, image_np, target_rows=None, target_cols=None):
+        """チェッカーボードを検出し、その四隅の座標を返します。"""
+        if image_np is None: return None
+        gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+        
+        # 試行するパターンのリスト。targetが指定されていればそれを最優先する。
+        # OpenCVのチェッカーボード検出は、内部の交点数（セルの数 - 1）を指定する必要がある。
+        patterns = []
+        if target_rows and target_cols:
+            patterns.append((target_cols - 1, target_rows - 1))
+        
+        # 一般的なチェッカーボードサイズもフォールバックとして保持
+        patterns.extend([(9, 7), (8, 6), (11, 8), (7, 5), (5, 5)])
+        
+        for p_cols, p_rows in patterns:
+            if p_cols <= 1 or p_rows <= 1: continue
+            ret, corners = cv2.findChessboardCorners(gray, (p_cols, p_rows), 
+                cv2.CALIB_CB_ADAPTIVE_THRESH + cv2.CALIB_CB_NORMALIZE_IMAGE + cv2.CALIB_CB_FAST_CHECK)
+            if ret:
+                # サブピクセル精度で補正
+                corners = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), 
+                    (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
+                
+                # 検出された格子の四隅を抽出
+                corners = corners.reshape(p_rows, p_cols, 2)
+                tl = corners[0, 0]
+                tr = corners[0, -1]
+                br = corners[-1, -1]
+                bl = corners[-1, 0]
+                return [tl, tr, br, bl]
+        return None
 
     def detect_initial_grid(self, image_np, target_rows=None, target_cols=None):
         h, w = image_np.shape[:2]
