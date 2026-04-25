@@ -610,12 +610,22 @@ class MainWindow(QMainWindow):
         self.spin_cols.blockSignals(False)
 
     def get_lens_params(self):
-        return self.slider_k1.value()/10000.0, self.slider_k2.value()/10000.0, self.slider_k3.value()/10000.0
+        return (self.slider_k1.value() / self.LENS_DIVISOR, 
+                self.slider_k2.value() / self.LENS_DIVISOR, 
+                self.slider_k3.value() / self.LENS_DIVISOR)
 
     def set_lens_params(self, k1, k2, k3):
-        self.slider_k1.blockSignals(True); self.slider_k1.setValue(int(k1*10000)); self.slider_k1.blockSignals(False)
-        self.slider_k2.blockSignals(True); self.slider_k2.setValue(int(k2*10000)); self.slider_k2.blockSignals(False)
-        self.slider_k3.blockSignals(True); self.slider_k3.setValue(int(k3*10000)); self.slider_k3.blockSignals(False)
+        self.slider_k1.blockSignals(True)
+        self.slider_k2.blockSignals(True)
+        self.slider_k3.blockSignals(True)
+        
+        self.slider_k1.setValue(int(k1 * self.LENS_DIVISOR))
+        self.slider_k2.setValue(int(k2 * self.LENS_DIVISOR))
+        self.slider_k3.setValue(int(k3 * self.LENS_DIVISOR))
+        
+        self.slider_k1.blockSignals(False)
+        self.slider_k2.blockSignals(False)
+        self.slider_k3.blockSignals(False)
         self._update_labels()
 
     def set_guide_scale(self, scale):

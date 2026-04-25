@@ -9,6 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src'
 from model import MeshModel, LensModel, Point
 from controller import Controller
 from PySide6.QtCore import QPointF
+from view import Canvas, PreviewWindow
 
 @pytest.fixture
 def mock_view():
@@ -19,9 +20,9 @@ def mock_view():
     view.is_smooth_warp_enabled.return_value = False
     view.is_super_res_enabled.return_value = False
     
-    # 子コンポーネントを単純なモックとして定義
-    view.canvas = MagicMock()
-    view.preview_window = MagicMock()
+    # spec付きモックで型安全性を確保
+    view.canvas = MagicMock(spec=Canvas)
+    view.preview_window = MagicMock(spec=PreviewWindow)
     view.check_show_crosshair = MagicMock()
     view.check_show_crosshair.isChecked.return_value = True
     
@@ -130,3 +131,70 @@ def test_controller_export(mock_view, tmp_path):
         ctrl.export()
     
     assert os.path.exists(export_file)
+
+def test_controller_auto_grid(mock_view):
+    mesh = MeshModel(rows=2, cols=2)
+    lens = LensModel()
+    ctrl = Controller(mock_view, mesh, lens)
+    ctrl.original_image = np.zeros((100, 100, 3), dtype=np.uint8)
+    
+    # py_engine.detect_initial_grid をモック化して成功をエミュレート
+    dummy_points = [[Point(0,0) for _ in range(3)] for _ in range(3)]
+    ctrl.py_engine.detect_initial_grid = MagicMock(return_value=(dummy_points, 3, 3))
+    
+    ctrl.on_auto_grid()
+    
+    assert ctrl.mesh.rows == 3
+    assert ctrl.mesh.cols == 3
+    assert ctrl.view.set_grid_dimensions.called
+    assert ctrl.view.canvas.set_mesh.called
+
+@patch('controller.LensWorker')
+def test_controller_auto_lens(mock_worker_class, mock_view):
+    mesh = MeshModel(rows=2, cols=2)
+    lens = LensModel()
+    ctrl = Controller(mock_view, mesh, lens)
+    ctrl.original_image = np.zeros((100, 100, 3), dtype=np.uint8)
+    
+    # モックのワーカーインスタンス
+    mock_worker_instance = MagicMock()
+    mock_worker_class.return_value = mock_worker_instance
+    
+    ctrl.on_auto_lens_correction()
+    
+    # ワーカースレッドが開始され、UIが適切にロック/更新されているか
+    assert mock_worker_instance.start.called
+    mock_view.btn_auto_lens.setEnabled.assert_called_with(False)
+    mock_view.set_progress_visible.assert_called_with(True)
+    
+    # on_auto_lens_finished のコールバックテスト
+    ctrl.on_auto_lens_finished(0.1, -0.05, 0.01)
+    assert ctrl.lens.k1 == 0.1
+    assert ctrl.lens.k3 == 0.01
+
+def test_controller_straighten_grid(mock_view):
+    mesh = MeshModel(rows=3, cols=3)
+    lens = LensModel()
+    ctrl = Controller(mock_view, mesh, lens)
+    
+    # メッシュの transform_by_corners が呼ばれることを監視
+    with patch.object(ctrl.mesh, 'transform_by_corners') as mock_transform:
+        ctrl.straighten_grid()
+        mock_transform.assert_called_once()
+        # linearize=True で呼ばれているか
+        _, kwargs = mock_transform.call_args
+        assert kwargs.get('linearize') is True
+
+def test_controller_smooth_warp_integration(mock_view):
+    mesh = MeshModel(rows=3, cols=3)
+    lens = LensModel()
+    mock_view.is_smooth_warp_enabled.return_value = True
+    ctrl = Controller(mock_view, mesh, lens)
+    
+    ctrl.py_engine.minimize_energy = MagicMock()
+    
+    # 内部の点を移動 (is_corner 判定されない点)
+    ctrl.on_point_moved(1, 1, 0.5, 0.5)
+    
+    # Smooth Warp ロジックが作動し minimize_energy が呼ばれるか
+    ctrl.py_engine.minimize_energy.assert_called_once()
