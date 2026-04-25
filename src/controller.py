@@ -276,6 +276,9 @@ class Controller:
             self.update_preview()
 
     def reset_mesh(self):
+        rows, cols = self.view.get_grid_dimensions()
+        self.mesh.rows = rows
+        self.mesh.cols = cols
         self.mesh.reset()
         self.view.canvas.set_mesh(self.mesh)
         self.update_preview()
@@ -386,16 +389,25 @@ class Controller:
             self.preview_window.set_crosshair_visible(self.view.check_show_crosshair.isChecked())
             self.preview_window.set_crosshair_pos(self.view.canvas.crosshair_pos)
 
-    def sync_crosshair(self, nx, ny):
+    def sync_crosshair(self, nx, ny, source=None):
         """メインキャンバスとプレビューキャンバスの十字ガイド位置を同期させます。"""
         pos = QPointF(nx, ny)
-        # メイン側を更新
-        self.view.canvas.crosshair_pos = pos
-        self.view.canvas.update()
         
-        # プレビュー側を更新
+        # source がメインキャンバスでない場合は、メイン側を更新
+        if source is not self.view.canvas:
+            self.view.canvas.crosshair_pos = pos
+            self.view.canvas.update()
+        
+        # source がプレビュー窓でない場合は、プレビュー側を更新
         if self.preview_window and self.preview_window.isVisible():
-            self.preview_window.set_crosshair_pos(pos)
+            if source is not self.preview_window and source is not self.preview_window.canvas:
+                self.preview_window.set_crosshair_pos(pos)
+
+    def on_guide_scale_changed(self, scale):
+        """ガイドスケール（補助線の密度）を全ビューで同期させます。"""
+        self.view.canvas.set_guide_scale(scale)
+        if self.preview_window and self.preview_window.isVisible():
+            self.preview_window.set_guide_scale(scale)
 
     def save_project(self):
         file_path, _ = QFileDialog.getSaveFileName(self.view, "Save Project", "", "JSON Files (*.json)")

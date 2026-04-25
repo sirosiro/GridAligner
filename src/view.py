@@ -161,6 +161,14 @@ class Canvas(QWidget):
         if event.key() == Qt.Key_Alt:
             self.constraint_mode = False
 
+    def set_crosshair_pos(self, pos):
+        self.crosshair_pos = pos
+        self.update()
+
+    def set_guide_scale(self, scale):
+        self.guide_scale = scale
+        self.update()
+
 class CameraDialog(QDialog):
     imageCaptured = Signal(np.ndarray)
 
@@ -242,6 +250,14 @@ class PreviewCanvas(QWidget):
         self.guide_scale = 0.05 # デフォルト 5%
         self.setMinimumSize(1, 1)
         self.setMouseTracking(True)
+
+    def set_crosshair_pos(self, pos):
+        self.crosshair_pos = pos
+        self.update()
+
+    def set_guide_scale(self, scale):
+        self.guide_scale = scale
+        self.update()
 
     def set_pixmap(self, pixmap):
         self.pixmap = pixmap
@@ -594,22 +610,16 @@ class MainWindow(QMainWindow):
         self.spin_cols.blockSignals(False)
 
     def get_lens_params(self):
-        # 高解像度値を返す (k1, k2, k3)
-        return (self.slider_k1.value() / self.LENS_DIVISOR, 
-                self.slider_k2.value() / self.LENS_DIVISOR,
-                self.slider_k3.value() / self.LENS_DIVISOR)
+        return self.slider_k1.value()/10000.0, self.slider_k2.value()/10000.0, self.slider_k3.value()/10000.0
 
     def set_lens_params(self, k1, k2, k3):
-        self.slider_k1.blockSignals(True)
-        self.slider_k2.blockSignals(True)
-        self.slider_k3.blockSignals(True)
-        self.slider_k1.setValue(int(k1 * self.LENS_DIVISOR))
-        self.slider_k2.setValue(int(k2 * self.LENS_DIVISOR))
-        self.slider_k3.setValue(int(k3 * self.LENS_DIVISOR))
-        self.slider_k1.blockSignals(False)
-        self.slider_k2.blockSignals(False)
-        self.slider_k3.blockSignals(False)
+        self.slider_k1.blockSignals(True); self.slider_k1.setValue(int(k1*10000)); self.slider_k1.blockSignals(False)
+        self.slider_k2.blockSignals(True); self.slider_k2.setValue(int(k2*10000)); self.slider_k2.blockSignals(False)
+        self.slider_k3.blockSignals(True); self.slider_k3.setValue(int(k3*10000)); self.slider_k3.blockSignals(False)
         self._update_labels()
+
+    def set_guide_scale(self, scale):
+        self.canvas.set_guide_scale(scale)
 
     def is_preview_enabled(self):
         return self.check_preview.isChecked()

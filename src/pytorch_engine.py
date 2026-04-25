@@ -48,7 +48,7 @@ class PyTorchWarpEngine:
         dist = 1 + lens.k1 * r2 + lens.k2 * (r2**2) + lens.k3 * (r2**3)
         return torch.stack((xx * 2 * dist, yy * 2 * dist * (w/h)), dim=-1).unsqueeze(0)
 
-    def reproject_mesh(self, mesh: MeshModel, old_lens: LensModel, new_lens: LensModel, aspect_ratio: float):
+    def reproject_mesh(self, mesh: MeshModel, old_lens: LensModel, new_lens: LensModel, aspect_ratio: float = 1.0):
         """
         レンズパラメータの変更に合わせて、メッシュ制御点の座標を再投影し、
         画像内の物理的な位置（ピクセル）を維持します。

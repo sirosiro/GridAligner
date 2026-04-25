@@ -33,9 +33,9 @@ def test_estimate_lens_parameters_simulated():
     def cb(curr, total, loss):
         progress_history.append((curr, total))
         
-    k1, k2 = engine.estimate_lens_parameters(distorted_img, progress_callback=cb)
+    k1, k2, k3 = engine.estimate_lens_parameters(distorted_img, progress_callback=cb)
     
-    print(f"Estimated k1: {k1}, k2: {k2}")
+    print(f"Estimated k1: {k1}, k2: {k2}, k3: {k3}")
     
     # 全く変化しない（0.0のまま）ではなく、何らかの補正方向（この場合は正のk1に対して負の方向）
     # に最適化が進んでいることを確認。
@@ -43,13 +43,14 @@ def test_estimate_lens_parameters_simulated():
     assert progress_history[-1][0] == 250 # max_iters (Matched with engine)
     
     # 歪ませた画像に対して、推定値が有意な値を持っていること
-    assert abs(k1) > 0.0001 or abs(k2) > 0.0001
+    assert abs(k1) > 0.0001 or abs(k2) > 0.0001 or abs(k3) > 0.0001
 
 def test_estimate_lens_parameters_blank():
     engine = PyTorchWarpEngine(device=torch.device("cpu"))
     blank = np.zeros((480, 640, 3), dtype=np.uint8)
     
-    # 線がない画像では 0, 0 を返すべき
-    k1, k2 = engine.estimate_lens_parameters(blank)
+    # 線がない画像では 0, 0, 0 を返すべき
+    k1, k2, k3 = engine.estimate_lens_parameters(blank)
     assert k1 == 0.0
     assert k2 == 0.0
+    assert k3 == 0.0
